@@ -1,5 +1,5 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import uvicorn
 import qrcode
 from io import BytesIO
@@ -7,17 +7,19 @@ from base64 import b64encode
 import uuid
 import asyncio
 import os
+import random
 
 app = FastAPI()
 
 # Game state
 players = {}  # pid -> {"name": str, "energy": float, "ready": bool}
-player_connections = {}  # pid -> WebSocket (สำหรับส่งข้อความส่วนตัว)
+player_connections = {}  # pid -> WebSocket
 ready_count = 0
-winner = None
+winners = []  # list of winner names (รองรับหลายคน)
 main_ws = None
 game_status = "waiting"  # "waiting" หรือ "playing"
 target = 4.9
+MAX_PLAYERS = 20  # จำนวนผู้เล่นสูงสุด (ปรับได้)
 
 MAIN_HTML = """
 <!DOCTYPE html>
@@ -29,53 +31,55 @@ MAIN_HTML = """
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; text-align: center; background: #111; color: #fff; margin: 0; padding: 20px; }
         h1 { font-size: 3em; margin: 20px; color: #0ff; text-shadow: 0 0 10px #0ff; }
-        h2 { font-size: 2em; color: #ff0; }
-        #players { list-style: none; padding: 0; font-size: 1.5em; }
-        #players li { padding: 10px; background: rgba(255,255,255,0.1); margin: 5px; border-radius: 10px; }
-        #players li.ready { background: rgba(0,255,0,0.3); }
-        canvas { border: 3px solid #0ff; background: #000; border-radius: 15px; margin: 20px 0; }
+        #players-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 15px; margin: 30px; }
+        .player-card { background: rgba(255,255,255,0.1); padding: 20px; border-radius: 15px; font-size: 1.4em; }
+        .player-card.ready { background: rgba(0,255,0,0.3); }
+        .player-name { font-weight: bold; font-size: 1.2em; }
+        canvas { border: 3px solid #0ff; background: #000; border-radius: 15px; margin: 20px 0; position: relative; }
         #message { font-size: 2em; min-height: 60px; color: #f0f; }
         #winner { font-size: 3em; color: #ff0; text-shadow: 0 0 20px #ff0; margin: 20px; }
         #ready-count { font-size: 2.5em; color: #0f0; margin: 20px; }
         #game-status { font-size: 2em; color: #ff0; margin: 20px; }
         img { max-width: 300px; border: 5px solid #0ff; border-radius: 20px; margin: 20px; }
         .link { font-size: 1.5em; margin: 20px; padding: 15px; background: rgba(0,255,255,0.2); border-radius: 15px; word-break: break-all; }
-        .copy-btn { padding: 10px 20px; font-size: 1.2em; background: #0f0; color: #000; border: none; border-radius: 10px; cursor: pointer; margin: 10px; }
-        .btn { padding: 15px 30px; font-size: 1.5em; background: #00f; color: #fff; border: none; border-radius: 15px; cursor: pointer; margin: 20px; text-decoration: none; display: inline-block; }
+        .copy-btn, .open-player-btn { padding: 12px 24px; font-size: 1.3em; margin: 10px; border: none; border-radius: 10px; cursor: pointer; }
+        .copy-btn { background: #0f0; color: #000; }
+        .open-player-btn { background: #00f; color: #fff; text-decoration: none; }
         #start-round-btn { padding: 20px 40px; font-size: 2em; background: #f00; color: #fff; border: none; border-radius: 20px; cursor: pointer; margin: 30px; }
         #start-round-btn:disabled { background: #555; cursor: not-allowed; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 100; }
+        .modal-content { background: #222; padding: 30px; border-radius: 20px; text-align: center; max-width: 80%; }
+        .modal-content h2 { color: #ff0; }
+        .close-modal { padding: 10px 20px; background: #f00; color: #fff; border: none; border-radius: 10px; cursor: pointer; margin-top: 20px; }
     </style>
 </head>
 <body>
     <h1>🎯 Atomic Shooting Gallery 🎯</h1>
-    <h2>สแกน QR Code เพื่อเข้าร่วมเกม หรือเข้าหน้าควบคุมผู้เล่น</h2>
+    <h2>สแกน QR Code หรือคลิกลิงก์เพื่อเข้าร่วมเกม</h2>
     
-    <div style="display: flex; justify-content: center; gap: 40px; flex-wrap: wrap;">
-        <div>
-            <h2>QR Code เข้าร่วมเกม (ผู้เล่น)</h2>
-            <img src="data:image/png;base64,{{QR_PLAYER_BASE64}}" alt="QR Code Player">
-            <div class="link" id="join-link">{{JOIN_URL}}</div>
-            <button class="copy-btn" onclick="copyLink()">คัดลอกลิงก์ผู้เล่น</button>
-        </div>
-        
-        <div>
-            <h2>QR Code จอใหญ่ (เซิร์ฟเวอร์/หน้าจอหลัก)</h2>
-            <img src="data:image/png;base64,{{QR_MAIN_BASE64}}" alt="QR Code Main">
-            <div class="link">{{MAIN_URL}}</div>
-            <a href="{{MAIN_URL}}" class="btn" target="_blank">เปิดจอใหญ่ทันที</a>
-        </div>
-    </div>
+    <img src="data:image/png;base64,{{QR_PLAYER_BASE64}}" alt="QR Code Player">
+    <div class="link" id="join-link">{{JOIN_URL}}</div>
+    <button class="copy-btn" onclick="copyLink()">คัดลอกลิงก์ผู้เล่น</button>
+    <a href="{{JOIN_URL}}" class="open-player-btn" target="_blank">เปิดหน้าผู้เล่นทันที</a>
 
     <h2>ผู้เล่นในห้องปัจจุบัน:</h2>
-    <div id="ready-count">{{READY_COUNT}}/{{TOTAL_PLAYERS}} พร้อม</div>
+    <div id="ready-count">0/0 พร้อม</div>
     <div id="game-status">รอเริ่มรอบ</div>
-    <ul id="players"></ul>
+    <div id="players-grid"></div>
     
     <button id="start-round-btn" onclick="startRound()" disabled>🔥 เริ่มรอบยิง! 🔥</button>
     
-    <canvas id="animation" width="900" height="500"></canvas>
+    <canvas id="animation" width="900" height="600"></canvas>
     <div id="message"></div>
     <h2 id="winner"></h2>
+
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title"></h2>
+            <p id="modal-message"></p>
+            <button class="close-modal" onclick="closeModal()">ปิด</button>
+        </div>
+    </div>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"></script>
     <script>
@@ -84,9 +88,11 @@ MAIN_HTML = """
         
         const canvas = document.getElementById('animation');
         const ctx = canvas.getContext('2d');
-        const mercury = { x: canvas.width / 2, y: canvas.height / 2, r: 80 };
+        const mercury = { x: canvas.width / 2, y: canvas.height / 2 + 50, r: 80 };
 
-        function drawMercury() {
+        function drawScene() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // อะตอมปรอท
             ctx.beginPath();
             ctx.arc(mercury.x, mercury.y, mercury.r, 0, Math.PI * 2);
             ctx.fillStyle = '#c0c0c0';
@@ -94,6 +100,69 @@ MAIN_HTML = """
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = 5;
             ctx.stroke();
+            ctx.fillStyle = '#fff';
+            ctx.font = '20px Arial';
+            ctx.fillText('อะตอมปรอท (Mercury Atom)', mercury.x - 120, mercury.y + mercury.r + 40);
+
+            // ป้ายปืน
+            ctx.fillStyle = '#0ff';
+            ctx.font = '24px Arial';
+            ctx.fillText('ปืนอิเล็กตรอน →', 50, mercury.y);
+        }
+
+        function animateShot(energy, result, playerName) {
+            drawScene();
+            let x = 0;
+            const y = mercury.y;
+            const speed = 12;
+            let interval = setInterval(() => {
+                drawScene();
+                // อิเล็กตรอน
+                ctx.beginPath();
+                ctx.arc(x, y, 18, 0, Math.PI * 2);
+                ctx.fillStyle = '#00f';
+                ctx.fill();
+                ctx.strokeStyle = '#0ff';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.fillStyle = '#ff0';
+                ctx.font = '18px Arial';
+                ctx.fillText(`${playerName} : ${energy} eV`, x - 60, y - 30);
+
+                x += speed;
+
+                if (x >= mercury.x - mercury.r - 18) {
+                    clearInterval(interval);
+                    if (result === 'hit') {
+                        ctx.fillStyle = '#ff0';
+                        ctx.font = '40px Arial';
+                        ctx.fillText('💥 ถูกเป๊ะ! 💥', mercury.x - 150, mercury.y - 150);
+                        for (let i = 0; i < 8; i++) {
+                            setTimeout(() => {
+                                drawScene();
+                                ctx.beginPath();
+                                ctx.arc(mercury.x, mercury.y, mercury.r + i*15, 0, Math.PI * 2);
+                                ctx.fillStyle = `rgba(255, ${255-i*30}, 0, 0.5)`;
+                                ctx.fill();
+                            }, i*100);
+                        }
+                    } else {
+                        let bx = mercury.x + mercury.r + 18;
+                        let bounceInt = setInterval(() => {
+                            drawScene();
+                            ctx.beginPath();
+                            ctx.arc(bx, y, 18, 0, Math.PI * 2);
+                            ctx.fillStyle = '#00f';
+                            ctx.fill();
+                            bx += 15;
+                            if (bx > canvas.width + 100) clearInterval(bounceInt);
+                        }, 30);
+                        ctx.fillStyle = '#f00';
+                        ctx.font = '30px Arial';
+                        ctx.fillText('🔔 พลาด! กระเด้ง', mercury.x + mercury.r + 30, y);
+                    }
+                }
+            }, 30);
         }
 
         ws.onmessage = (e) => {
@@ -102,71 +171,35 @@ MAIN_HTML = """
                 const data = msg.data;
                 document.getElementById('ready-count').textContent = `${data.ready_count}/${data.total_players} พร้อม`;
                 document.getElementById('game-status').textContent = data.game_status === 'playing' ? 'กำลังยิง...' : 'รอเริ่มรอบ';
-                document.getElementById('players').innerHTML = data.players.map(p => 
-                    `<li class="${p.ready ? 'ready' : ''}">🔫 ${p.name} (${p.energy} eV) ${p.ready ? '✅' : ''}</li>`
-                ).join('');
-                document.getElementById('winner').textContent = data.winner ? `🏆 ชนะเลิศ: ${data.winner} 🏆` : '';
+                document.getElementById('winner').textContent = data.winners.length > 0 ? `🏆 ผู้ชนะ: ${data.winners.join(', ')} 🏆` : '';
                 
+                const grid = document.getElementById('players-grid');
+                grid.innerHTML = data.players.map(p => 
+                    `<div class="player-card ${p.ready ? 'ready' : ''}">
+                        <div class="player-name">🔫 ${p.name}</div>
+                        <div>พลังงาน: ${p.energy} eV</div>
+                        ${p.ready ? '<div style="color:#0f0;">✅ พร้อม</div>' : ''}
+                    </div>`
+                ).join('');
+
                 const startBtn = document.getElementById('start-round-btn');
-                if (data.total_players > 0 && data.game_status === 'waiting') {
-                    startBtn.disabled = false;
-                } else {
-                    startBtn.disabled = true;
-                }
+                startBtn.disabled = !(data.total_players > 0 && data.game_status === 'waiting');
             } else if (msg.type === 'shot') {
-                document.getElementById('message').textContent = 
-                    `${msg.data.player} ยิงอิเล็กตรอน ${msg.data.energy} eV ! ${msg.data.result === 'hit' ? '💥 ถูกต้อง!' : ''}`;
-                animateShot(msg.data.energy, msg.data.result);
-            } else if (msg.type === 'all_shots_done') {
-                document.getElementById('message').textContent = 'รอบนี้จบแล้ว! ไม่มีผู้ชนะ รอรอบใหม่...';
+                document.getElementById('message').textContent = `${msg.data.player} ยิง ${msg.data.energy} eV`;
+                animateShot(msg.data.energy, msg.data.result, msg.data.player);
+            } else if (msg.type === 'winners_announce') {
+                showModal('ผู้ชนะรอบนี้!', msg.data.winners.join(', '));
             }
         };
 
-        function animateShot(energy, result) {
-            let x = 0;
-            const y = mercury.y;
-            const speed = 15;
-            const interval = setInterval(() => {
-                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                drawMercury();
+        function showModal(title, message) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').textContent = message;
+            document.getElementById('modal').style.display = 'flex';
+        }
 
-                ctx.beginPath();
-                ctx.arc(x, y, 15, 0, Math.PI * 2);
-                ctx.fillStyle = '#00f';
-                ctx.fill();
-
-                x += speed;
-
-                if (x >= mercury.x - mercury.r - 15) {
-                    clearInterval(interval);
-                    if (result === 'hit') {
-                        for (let i = 0; i < 5; i++) {
-                            setTimeout(() => {
-                                ctx.clearRect(0, 0, canvas.width, canvas.height);
-                                drawMercury();
-                                ctx.beginPath();
-                                ctx.arc(mercury.x, mercury.y, mercury.r + i*20, 0, Math.PI * 2);
-                                ctx.fillStyle = `rgba(255,255,${100-i*20},0.6)`;
-                                ctx.fill();
-                            }, i*200);
-                        }
-                        document.getElementById('message').textContent += ' 💥 เกิดการถ่ายเทพลังงาน!';
-                    } else {
-                        let bx = mercury.x + mercury.r + 15;
-                        const bounceInt = setInterval(() => {
-                            ctx.clearRect(0, 0, canvas.width, canvas.height);
-                            drawMercury();
-                            ctx.beginPath();
-                            ctx.arc(bx, y, 15, 0, Math.PI * 2);
-                            ctx.fillStyle = '#00f';
-                            ctx.fill();
-                            bx += 10;
-                            if (bx > canvas.width + 50) clearInterval(bounceInt);
-                        }, 30);
-                        document.getElementById('message').textContent += ' 🔔 กระเด้ง!';
-                    }
-                }
-            }, 30);
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
         }
 
         function startRound() {
@@ -175,7 +208,9 @@ MAIN_HTML = """
 
         function copyLink() {
             const link = document.getElementById('join-link').textContent;
-            navigator.clipboard.writeText(link).then(() => alert('คัดลอกลิงก์เรียบร้อย!'));
+            navigator.clipboard.writeText(link).then(() => {
+                showModal('สำเร็จ!', 'คัดลอกลิงก์เรียบร้อยแล้ว');
+            });
         }
     </script>
 </body>
@@ -195,8 +230,13 @@ PLAYER_HTML = """
         input { padding: 15px; font-size: 1.2em; width: 80%; margin: 20px; border-radius: 10px; border: none; }
         button { padding: 15px 25px; font-size: 1.5em; margin: 10px; border: none; border-radius: 15px; background: #0f0; color: #000; cursor: pointer; }
         button:disabled { background: #555; cursor: not-allowed; }
-        #energy { font-size: 3em; color: #ff0; }
+        #energy-display { font-size: 4em; color: #ff0; margin: 30px; }
+        #scale { font-size: 1.5em; display: flex; justify-content: space-between; width: 80%; margin: 0 auto; }
         #status { font-size: 1.5em; margin: 20px; color: #f0f; min-height: 50px; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); justify-content: center; align-items: center; z-index: 100; }
+        .modal-content { background: #222; padding: 40px; border-radius: 20px; text-align: center; max-width: 80%; }
+        .modal-content h2 { color: #ff0; font-size: 2.5em; }
+        .close-modal { padding: 10px 20px; background: #f00; color: #fff; border: none; border-radius: 10px; cursor: pointer; margin-top: 20px; }
     </style>
 </head>
 <body>
@@ -208,8 +248,9 @@ PLAYER_HTML = """
     </div>
 
     <div id="game" style="display:none;">
-        <h2>ปรับพลังงานอิเล็กตรอน (เป้าหมาย ~4.9 eV)</h2>
-        <div id="energy">4.5</div>
+        <h2>ปรับพลังงานอิเล็กตรอน</h2>
+        <div id="scale"><span>4.5 eV</span><span>5.5 eV</span></div>
+        <div id="energy-display">4.5</div>
         <button onclick="adj(-0.1)">−0.1</button>
         <button onclick="adj(0.1)">+0.1</button>
         <br><br>
@@ -217,15 +258,28 @@ PLAYER_HTML = """
         <p id="status">สถานะ: กำลังปรับพลังงาน...</p>
     </div>
 
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h2 id="modal-title"></h2>
+            <p id="modal-message"></p>
+            <button class="close-modal" onclick="closeModal()">ปิด</button>
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"></script>
     <script>
-        let pid, energy = 4.5, ws, ready = false;
+        let pid, energy = 4.5, ws, ready = false, playerName = '';
 
         async function join() {
             const name = document.getElementById('name').value.trim();
-            if (!name) return alert('กรอกชื่อด้วยนะ!');
+            if (!name) return showModal('ผิดพลาด', 'กรอกชื่อด้วยนะ!');
+            playerName = name;
             const res = await fetch('/join', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
             const data = await res.json();
+            if (data.error) {
+                showModal('ไม่สามารถเข้าร่วมได้', data.error);
+                return;
+            }
             pid = data.player_id;
 
             const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -234,28 +288,28 @@ PLAYER_HTML = """
             document.getElementById('join-section').style.display = 'none';
             document.getElementById('game').style.display = 'block';
             document.getElementById('status').textContent = 'ปรับพลังงานแล้วกดยืนยันเมื่อพร้อม';
-
-            ws.onmessage = (e) => {
-                const msg = JSON.parse(e.data);
-                if (msg.type === 'round_start') {
-                    document.getElementById('status').textContent = 'รอบเริ่มแล้ว! กำลังยิง...';
-                } else if (msg.type === 'result') {
-                    if (msg.hit) {
-                        alert('🎉 ยิงถูกเป๊ะ 4.9 eV! คุณคือผู้ชนะ!!! 🏆');
-                        document.getElementById('status').textContent = 'คุณชนะรอบนี้!';
-                    } else {
-                        alert(`พลาดไปนิดเดียว (${msg.energy} eV)! ปรับค่าใหม่ในรอบถัดไป`);
-                        document.getElementById('status').textContent = 'พลาด! รอรอบใหม่...';
-                    }
-                    ready = false;
-                    document.getElementById('ready-btn').textContent = 'ยืนยันพร้อมยิง!';
-                }
-            };
         }
+
+        ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            if (msg.type === 'round_start') {
+                document.getElementById('status').textContent = 'รอบเริ่มแล้ว! กำลังยิง...';
+            } else if (msg.type === 'result') {
+                if (msg.is_winner) {
+                    showModal('🎉 ยินดีด้วย! 🎉', `คุณยิงถูกเป๊ะ ${target} eV!\nไปหมุนกงล้อรางวัลกัน!`, () => {
+                        location.href = '/wheel';
+                    });
+                } else {
+                    showModal('พลาด!', `คุณยิง ${msg.energy} eV (พลาดไปนิดเดียว)\nรอรอบใหม่เพื่อลุ้นต่อ`, () => {
+                        location.href = '/player';
+                    });
+                }
+            }
+        };
 
         function adj(d) {
             energy = Math.round((Math.max(4.5, Math.min(5.5, energy + d))) * 10) / 10;
-            document.getElementById('energy').textContent = energy;
+            document.getElementById('energy-display').textContent = energy;
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({action: 'adjust', energy}));
             }
@@ -269,6 +323,108 @@ PLAYER_HTML = """
                 document.getElementById('status').textContent = ready ? 'พร้อมยิงแล้ว! รอหัวห้องเริ่ม...' : 'กำลังปรับพลังงาน...';
             }
         }
+
+        function showModal(title, message, callback = null) {
+            document.getElementById('modal-title').textContent = title;
+            document.getElementById('modal-message').textContent = message;
+            document.getElementById('modal').style.display = 'flex';
+            if (callback) {
+                document.querySelector('.close-modal').onclick = () => {
+                    closeModal();
+                    callback();
+                };
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('modal').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
+"""
+
+WHEEL_HTML = """
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>หมุนกงล้อรางวัล!</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: linear-gradient(#003, #111); color: #fff; text-align: center; padding: 20px; }
+        h1 { color: #ff0; text-shadow: 0 0 15px #ff0; }
+        canvas { border: 5px solid #0ff; border-radius: 50%; margin: 30px; }
+        button { padding: 15px 30px; font-size: 1.8em; background: #f00; color: #fff; border: none; border-radius: 15px; cursor: pointer; }
+        #result { font-size: 3em; margin: 40px; color: #ff0; }
+        .close-btn { position: absolute; top: 20px; right: 20px; font-size: 2em; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="close-btn" onclick="location.href='/player'">✖</div>
+    <h1>🎡 หมุนกงล้อรางวัล 🎡</h1>
+    <canvas id="wheel" width="400" height="400"></canvas>
+    <br>
+    <button id="spin-btn" onclick="spin()">หมุน!</button>
+    <div id="result"></div>
+
+    <script>
+        const canvas = document.getElementById('wheel');
+        const ctx = canvas.getContext('2d');
+        const sectors = ['1 ลูกอม', '2 ลูกอม', '3 ลูกอม', '4 ลูกอม', '5 ลูกอม', 'รางวัลปริศนา'];
+        const colors = ['#ff0', '#0f0', '#0ff', '#f0f', '#ff5', '#f80'];
+        let currentAngle = 0;
+        let spinning = false;
+
+        function drawWheel() {
+            const angleStep = (Math.PI * 2) / sectors.length;
+            sectors.forEach((text, i) => {
+                ctx.beginPath();
+                ctx.fillStyle = colors[i];
+                ctx.moveTo(200, 200);
+                ctx.arc(200, 200, 200, currentAngle + i*angleStep, currentAngle + (i+1)*angleStep);
+                ctx.fill();
+                ctx.save();
+                ctx.translate(200, 200);
+                ctx.rotate(currentAngle + i*angleStep + angleStep/2);
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 24px Arial';
+                ctx.fillText(text, 80, 10);
+                ctx.restore();
+            });
+            // Pointer
+            ctx.beginPath();
+            ctx.moveTo(380, 200);
+            ctx.lineTo(340, 180);
+            ctx.lineTo(340, 220);
+            ctx.fillStyle = '#f00';
+            ctx.fill();
+        }
+
+        function spin() {
+            if (spinning) return;
+            spinning = true;
+            document.getElementById('spin-btn').disabled = true;
+            const spinAngle = 3600 + Math.random() * 3600; // 10-20 รอบ
+            let startAngle = currentAngle;
+            let time = 0;
+            const duration = 5000;
+            const anim = setInterval(() => {
+                time += 30;
+                const progress = Math.min(time / duration, 1);
+                const ease = 1 - Math.pow(1 - progress, 3);
+                currentAngle = startAngle + spinAngle * ease;
+                drawWheel();
+                if (progress >= 1) {
+                    clearInterval(anim);
+                    const finalSector = Math.floor(((360 - (currentAngle % 360)) / 360) * sectors.length);
+                    document.getElementById('result').textContent = `เย่! คุณได้ ${sectors[finalSector]} 🍬`;
+                    spinning = false;
+                }
+            }, 30);
+        }
+
+        drawWheel();
     </script>
 </body>
 </html>
@@ -277,7 +433,6 @@ PLAYER_HTML = """
 @app.get("/", response_class=HTMLResponse)
 async def main_screen(request: Request):
     base_url = str(request.base_url).rstrip("/")
-    main_url = base_url + "/"
     join_url = base_url + "/player"
     
     qr_player = qrcode.QRCode(box_size=10, border=4)
@@ -288,33 +443,32 @@ async def main_screen(request: Request):
     img_player.save(buf_player, format="PNG")
     qr_player_b64 = b64encode(buf_player.getvalue()).decode()
     
-    qr_main = qrcode.QRCode(box_size=10, border=4)
-    qr_main.add_data(main_url)
-    qr_main.make(fit=True)
-    img_main = qr_main.make_image(fill='black', back_color='white')
-    buf_main = BytesIO()
-    img_main.save(buf_main, format="PNG")
-    qr_main_b64 = b64encode(buf_main.getvalue()).decode()
-    
-    current_ready = len([p for p in players.values() if p.get("ready", False)])
+    current_ready = ready_count
     total_players = len(players)
     
     html = MAIN_HTML.replace("{{QR_PLAYER_BASE64}}", qr_player_b64)\
-                    .replace("{{QR_MAIN_BASE64}}", qr_main_b64)\
-                    .replace("{{JOIN_URL}}", join_url)\
-                    .replace("{{MAIN_URL}}", main_url)\
-                    .replace("{{READY_COUNT}}", str(current_ready))\
-                    .replace("{{TOTAL_PLAYERS}}", str(total_players))
+                    .replace("{{JOIN_URL}}", join_url)
     return HTMLResponse(html)
 
 @app.get("/player", response_class=HTMLResponse)
 async def player_screen():
     return HTMLResponse(PLAYER_HTML)
 
+@app.get("/wheel", response_class=HTMLResponse)
+async def wheel_screen():
+    return HTMLResponse(WHEEL_HTML)
+
 @app.post("/join")
 async def join(request: Request):
+    if game_status == "playing":
+        return JSONResponse({"error": "เกมกำลังดำเนินอยู่ โปรดรอรอบใหม่"})
+    if len(players) >= MAX_PLAYERS:
+        return JSONResponse({"error": "ห้องเต็มแล้ว โปรดรอสักครู่"})
+    
     data = await request.json()
     name = data["name"].strip()
+    if not name:
+        return JSONResponse({"error": "กรุณากรอกชื่อ"})
     pid = str(uuid.uuid4())
     players[pid] = {"name": name, "energy": 4.5, "ready": False}
     await broadcast_state()
@@ -378,13 +532,14 @@ async def broadcast_state():
                 "ready_count": ready_count,
                 "total_players": len(players),
                 "game_status": game_status,
-                "winner": winner
+                "winners": winners
             }
         })
 
 async def process_round():
-    global winner, ready_count, game_status
-    # แจ้งผู้เล่นทุกรายว่ารอบเริ่ม
+    global winners, ready_count, game_status
+    winners = []
+    
     for pws in player_connections.values():
         try:
             await pws.send_json({"type": "round_start"})
@@ -399,40 +554,35 @@ async def process_round():
         hit = abs(energy - target) <= 0.01
         results.append((pid, p["name"], energy, hit))
         if hit:
-            winner = p["name"]
+            winners.append(p["name"])
     
-    # ยิงทีละคนบนจอใหญ่
     for _, name, energy, hit_result in results:
         await broadcast_shot(name, energy, "hit" if hit_result else "miss")
-        await asyncio.sleep(4)
+        await asyncio.sleep(4.5)
     
-    if not winner:
+    # แจ้งผู้ชนะบนจอใหญ่
+    if winners:
         if main_ws:
-            await main_ws.send_json({"type": "all_shots_done"})
+            await main_ws.send_json({"type": "winners_announce", "data": {"winners": winners}})
     
-    # แจ้งผลส่วนตัวให้ผู้เล่นแต่ละคน
-    for pid, name, energy, hit in results:
+    # แจ้งผลส่วนตัว + redirect
+    for pid, name, energy, is_winner in results:
         if pid in player_connections:
             try:
                 await player_connections[pid].send_json({
                     "type": "result",
-                    "hit": hit,
+                    "is_winner": is_winner,
                     "energy": energy
                 })
             except:
                 pass
     
-    # รีเซ็ตสถานะสำหรับรอบใหม่
+    # รีเซ็ตสำหรับรอบใหม่ (ผู้เล่นจะ reconnect เองหลัง redirect)
     game_status = "waiting"
     ready_count = 0
     for p in players.values():
         p["ready"] = False
     await broadcast_state()
-    
-    if winner:
-        await asyncio.sleep(8)
-        winner = None
-        await broadcast_state()
 
 async def broadcast_shot(player_name, energy, result):
     if main_ws:
