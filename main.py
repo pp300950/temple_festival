@@ -114,7 +114,7 @@ MAIN_HTML = """
             drawScene();
             let x = 0;
             const y = mercury.y;
-            const speed = 12;
+            const speed = 10;  // ช้าลง
             let interval = setInterval(() => {
                 drawScene();
                 // อิเล็กตรอน
@@ -133,18 +133,17 @@ MAIN_HTML = """
 
                 if (x >= mercury.x - mercury.r - 18) {
                     clearInterval(interval);
+                    document.getElementById('message').textContent = `${playerName} ยิง ${energy} eV`;
                     if (result === 'hit') {
-                        ctx.fillStyle = '#ff0';
-                        ctx.font = '40px Arial';
-                        ctx.fillText('💥 ถูกเป๊ะ! 💥', mercury.x - 150, mercury.y - 150);
-                        for (let i = 0; i < 8; i++) {
+                        document.getElementById('message').textContent += ' → 💥 ถูกเป๊ะ! 💥';
+                        for (let i = 0; i < 10; i++) {  // effect นานขึ้น
                             setTimeout(() => {
                                 drawScene();
                                 ctx.beginPath();
                                 ctx.arc(mercury.x, mercury.y, mercury.r + i*15, 0, Math.PI * 2);
-                                ctx.fillStyle = `rgba(255, ${255-i*30}, 0, 0.5)`;
+                                ctx.fillStyle = `rgba(255, ${255-i*25}, 0, 0.5)`;
                                 ctx.fill();
-                            }, i*100);
+                            }, i*150);
                         }
                     } else {
                         let bx = mercury.x + mercury.r + 18;
@@ -154,15 +153,13 @@ MAIN_HTML = """
                             ctx.arc(bx, y, 18, 0, Math.PI * 2);
                             ctx.fillStyle = '#00f';
                             ctx.fill();
-                            bx += 15;
+                            bx += 12;
                             if (bx > canvas.width + 100) clearInterval(bounceInt);
-                        }, 30);
-                        ctx.fillStyle = '#f00';
-                        ctx.font = '30px Arial';
-                        ctx.fillText('🔔 พลาด! กระเด้ง', mercury.x + mercury.r + 30, y);
+                        }, 40);  // ช้าลง
+                        document.getElementById('message').textContent += ' → 🔔 พลาด! กระเด้ง';
                     }
                 }
-            }, 30);
+            }, 40);  // ช้าลง
         }
 
         ws.onmessage = (e) => {
@@ -185,10 +182,11 @@ MAIN_HTML = """
                 const startBtn = document.getElementById('start-round-btn');
                 startBtn.disabled = !(data.total_players > 0 && data.game_status === 'waiting');
             } else if (msg.type === 'shot') {
-                document.getElementById('message').textContent = `${msg.data.player} ยิง ${msg.data.energy} eV`;
                 animateShot(msg.data.energy, msg.data.result, msg.data.player);
             } else if (msg.type === 'winners_announce') {
                 showModal('ผู้ชนะรอบนี้!', msg.data.winners.join(', '));
+            } else if (msg.type === 'start_failed') {
+                showModal('ยังไม่สามารถเริ่มได้!', `ยังมี ${msg.data.missing} คนที่ยังไม่กดพร้อม`);
             }
         };
 
@@ -268,12 +266,11 @@ PLAYER_HTML = """
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"></script>
     <script>
-        let pid, energy = 4.5, ws, ready = false, playerName = '';
+        let pid, energy = 4.5, ws, ready = false;
 
         async function join() {
             const name = document.getElementById('name').value.trim();
             if (!name) return showModal('ผิดพลาด', 'กรอกชื่อด้วยนะ!');
-            playerName = name;
             const res = await fetch('/join', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
             const data = await res.json();
             if (data.error) {
@@ -285,27 +282,33 @@ PLAYER_HTML = """
             const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
             ws = new ReconnectingWebSocket(`${protocol}://${location.host}/ws/player/${pid}`);
 
+            ws.onmessage = (e) => {
+                const msg = JSON.parse(e.data);
+                if (msg.type === 'round_start') {
+                    document.getElementById('status').textContent = 'รอบเริ่มแล้ว! กำลังยิง...';
+                } else if (msg.type === 'result') {
+                    if (msg.is_winner) {
+                        showModal('🎉 ยินดีด้วย! 🎉', 'คุณยิงถูกเป๊ะ!\nไปหมุนกงล้อรางวัลกัน!', () => {
+                            location.href = '/wheel';
+                        });
+                    } else {
+                        showModal('พลาด!', `คุณยิง ${msg.energy} eV (พลาดไปนิดเดียว)\nรอรอบใหม่เพื่อลุ้นต่อ`, () => {
+                            location.href = '/player';
+                        });
+                    }
+                } else if (msg.type === 'please_ready') {
+                    showModal('โปรดกดพร้อม!', 'หัวห้องต้องการเริ่มเกม แต่คุณยังไม่ได้กดยืนยันพร้อม');
+                } else if (msg.type === 'round_end') {
+                    ready = false;
+                    document.getElementById('ready-btn').textContent = 'ยืนยันพร้อมยิง!';
+                    document.getElementById('status').textContent = 'ปรับพลังงานแล้วกดยืนยันเมื่อพร้อม';
+                }
+            };
+
             document.getElementById('join-section').style.display = 'none';
             document.getElementById('game').style.display = 'block';
             document.getElementById('status').textContent = 'ปรับพลังงานแล้วกดยืนยันเมื่อพร้อม';
         }
-
-        ws.onmessage = (e) => {
-            const msg = JSON.parse(e.data);
-            if (msg.type === 'round_start') {
-                document.getElementById('status').textContent = 'รอบเริ่มแล้ว! กำลังยิง...';
-            } else if (msg.type === 'result') {
-                if (msg.is_winner) {
-                    showModal('🎉 ยินดีด้วย! 🎉', `คุณยิงถูกเป๊ะ ${target} eV!\nไปหมุนกงล้อรางวัลกัน!`, () => {
-                        location.href = '/wheel';
-                    });
-                } else {
-                    showModal('พลาด!', `คุณยิง ${msg.energy} eV (พลาดไปนิดเดียว)\nรอรอบใหม่เพื่อลุ้นต่อ`, () => {
-                        location.href = '/player';
-                    });
-                }
-            }
-        };
 
         function adj(d) {
             energy = Math.round((Math.max(4.5, Math.min(5.5, energy + d))) * 10) / 10;
@@ -328,12 +331,11 @@ PLAYER_HTML = """
             document.getElementById('modal-title').textContent = title;
             document.getElementById('modal-message').textContent = message;
             document.getElementById('modal').style.display = 'flex';
-            if (callback) {
-                document.querySelector('.close-modal').onclick = () => {
-                    closeModal();
-                    callback();
-                };
-            }
+            const closeBtn = document.querySelector('.close-modal');
+            closeBtn.onclick = () => {
+                closeModal();
+                if (callback) callback();
+            };
         }
 
         function closeModal() {
@@ -485,9 +487,20 @@ async def ws_main(ws: WebSocket):
             msg = await ws.receive_json()
             if msg.get("type") == "control" and msg.get("action") == "start_round":
                 if game_status == "waiting" and len(players) > 0:
-                    game_status = "playing"
-                    await broadcast_state()
-                    await process_round()
+                    if ready_count < len(players):
+                        missing = len(players) - ready_count
+                        await main_ws.send_json({"type": "start_failed", "data": {"missing": missing}})
+                        # แจ้งผู้เล่นที่ยังไม่พร้อม
+                        for pid, p in players.items():
+                            if not p["ready"] and pid in player_connections:
+                                try:
+                                    await player_connections[pid].send_json({"type": "please_ready"})
+                                except:
+                                    pass
+                    else:
+                        game_status = "playing"
+                        await broadcast_state()
+                        await process_round()
     except WebSocketDisconnect:
         main_ws = None
 
@@ -558,7 +571,7 @@ async def process_round():
     
     for _, name, energy, hit_result in results:
         await broadcast_shot(name, energy, "hit" if hit_result else "miss")
-        await asyncio.sleep(4.5)
+        await asyncio.sleep(6)  # นานขึ้นเพื่อให้ข้อความและเอฟเฟกต์ค้างนาน
     
     # แจ้งผู้ชนะบนจอใหญ่
     if winners:
@@ -577,12 +590,24 @@ async def process_round():
             except:
                 pass
     
-    # รีเซ็ตสำหรับรอบใหม่ (ผู้เล่นจะ reconnect เองหลัง redirect)
+    # แจ้งรอบจบเพื่อรีเซ็ต UI ผู้เล่น
+    for pws in player_connections.values():
+        try:
+            await pws.send_json({"type": "round_end"})
+        except:
+            pass
+    
+    # รีเซ็ตสถานะ
     game_status = "waiting"
     ready_count = 0
     for p in players.values():
         p["ready"] = False
     await broadcast_state()
+    
+    if winners:
+        await asyncio.sleep(10)  # นานขึ้นเพื่อให้ป้ายผู้ชนะค้าง
+        winners = []
+        await broadcast_state()
 
 async def broadcast_shot(player_name, energy, result):
     if main_ws:
