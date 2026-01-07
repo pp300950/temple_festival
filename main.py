@@ -668,6 +668,13 @@ async def ws_player(ws: WebSocket, pid: str):
         await broadcast_state()
 
 async def broadcast_state():
+    global game_phase, game_status, winners, ready_count
+    if len(players) == 0 and game_phase != "lobby":
+        game_phase = "lobby"
+        game_status = "waiting"
+        winners = []
+        ready_count = 0
+        
     player_list = [{"name": v["name"], "energy": v["energy"], "ready": v["ready"]} for v in players.values()]
     data = {
         "type": "state",
@@ -719,6 +726,8 @@ async def start_round_with_timeout():
                 pass
         players.pop(pid, None)
         player_connections.pop(pid, None)
+        
+    await broadcast_state()
     
     # ถ้ายังมีผู้เล่นเหลือ → เริ่มรอบ
     if len(players) > 0 and ready_count == len(players):
