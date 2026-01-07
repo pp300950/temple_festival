@@ -16,7 +16,7 @@ players = {}  # pid -> {"name": str, "energy": float, "ready": bool}
 player_connections = {}  # pid -> WebSocket
 ready_count = 0
 winners = []  # list of winner names (รองรับหลายคน)
-main_ws = None
+main_connections = set()
 game_status = "waiting"  # "waiting" หรือ "playing"
 target = 4.9
 MAX_PLAYERS = 20  # จำนวนผู้เล่นสูงสุด (ปรับได้)
@@ -186,7 +186,10 @@ MAIN_HTML = """
                 showModal('ผู้ชนะรอบนี้!', msg.data.winners.join(', '));
             } else if (msg.type === 'start_failed') {
                 showModal('ยังไม่สามารถเริ่มได้!', `ยังมี ${msg.data.missing} คนที่ยังไม่กดพร้อม`);
-            }
+            } else if (msg.type === 'all_shots_done') {
+            document.getElementById('message').textContent = 'รอบนี้จบแล้ว! ไม่มีผู้ชนะ รอรอบใหม่...';
+            drawScene();  // clear animation
+        }
         };
 
         function showModal(title, message) {
@@ -209,6 +212,10 @@ MAIN_HTML = """
                 showModal('สำเร็จ!', 'คัดลอกลิงก์เรียบร้อยแล้ว');
             });
         }
+        
+        drawScene();
+        document.getElementById('message').textContent = '';
+        document.getElementById('winner').textContent = '';
     </script>
 </body>
 </html>
@@ -474,10 +481,10 @@ async def join(request: Request):
 
 @app.websocket("/ws/main")
 async def ws_main(ws: WebSocket):
-    global main_ws, game_status
+    global game_status
     await ws.accept()
-    main_ws = ws
-    await broadcast_state()
+    main_connections.add(ws)
+    await broadcast_state()  # ส่ง state ปัจจุบันให้จอที่ connect ใหม่ทันที
     try:
         while True:
             msg = await ws.receive_json()
@@ -485,7 +492,13 @@ async def ws_main(ws: WebSocket):
                 if game_status == "waiting" and len(players) > 0:
                     if ready_count < len(players):
                         missing = len(players) - ready_count
-                        await main_ws.send_json({"type": "start_failed", "data": {"missing": missing}})
+                        # ส่ง start_failed ให้ทุกจอใหญ่
+                        for conn in main_connections.copy():
+                            try:
+                                await conn.send_json({"type": "start_failed", "data": {"missing": missing}})
+                            except:
+                                main_connections.remove(conn)
+                        # แจ้งผู้เล่นที่ยังไม่พร้อม
                         for pid, p in players.items():
                             if not p["ready"] and pid in player_connections:
                                 try:
@@ -497,7 +510,7 @@ async def ws_main(ws: WebSocket):
                         await broadcast_state()
                         await process_round()
     except WebSocketDisconnect:
-        main_ws = None
+        main_connections.remove(ws)
 
 @app.websocket("/ws/player/{pid}")
 async def ws_player(ws: WebSocket, pid: str):
@@ -531,19 +544,23 @@ async def ws_player(ws: WebSocket, pid: str):
         await broadcast_state()
 
 async def broadcast_state():
-    if main_ws:
-        player_list = [{"name": v["name"], "energy": v["energy"], "ready": v["ready"]} for v in players.values()]
-        await main_ws.send_json({
-            "type": "state",
-            "data": {
-                "players": player_list,
-                "ready_count": ready_count,
-                "total_players": len(players),
-                "game_status": game_status,
-                "winners": winners
-            }
-        })
-
+    player_list = [{"name": v["name"], "energy": v["energy"], "ready": v["ready"]} for v in players.values()]
+    data = {
+        "type": "state",
+        "data": {
+            "players": player_list,
+            "ready_count": ready_count,
+            "total_players": len(players),
+            "game_status": game_status,
+            "winners": winners
+        }
+    }
+    for conn in main_connections.copy():
+        try:
+            await conn.send_json(data)
+        except:
+            main_connections.remove(conn)
+            
 async def process_round():
     global winners, ready_count, game_status
     winners = []
@@ -569,9 +586,19 @@ async def process_round():
         await asyncio.sleep(6)
     
     if winners:
-        if main_ws:
-            await main_ws.send_json({"type": "winners_announce", "data": {"winners": winners}})
+        for conn in main_connections.copy():
+            try:
+                await conn.send_json({"type": "winners_announce", "data": {"winners": winners}})
+            except:
+                main_connections.remove(conn)
     
+    if not winners:
+        for conn in main_connections.copy():
+            try:
+                await conn.send_json({"type": "all_shots_done"})
+            except:
+                main_connections.remove(conn)
+                
     for pid, name, energy, is_winner in results:
         if pid in player_connections:
             try:
@@ -601,11 +628,15 @@ async def process_round():
         await broadcast_state()
 
 async def broadcast_shot(player_name, energy, result):
-    if main_ws:
-        await main_ws.send_json({
-            "type": "shot",
-            "data": {"player": player_name, "energy": energy, "result": result}
-        })
+    data = {
+        "type": "shot",
+        "data": {"player": player_name, "energy": energy, "result": result}
+    }
+    for conn in main_connections.copy():
+        try:
+            await conn.send_json(data)
+        except:
+            main_connections.remove(conn)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
