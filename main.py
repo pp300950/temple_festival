@@ -569,7 +569,7 @@ async def join(request: Request):
 
 @app.websocket("/ws/main")
 async def ws_main(ws: WebSocket):
-    global game_status
+    global game_status, game_phase
     await ws.accept()
     main_connections.add(ws)
     await broadcast_state()  # ส่ง state ปัจจุบันให้จอที่ connect ใหม่ทันที
@@ -578,7 +578,6 @@ async def ws_main(ws: WebSocket):
             msg = await ws.receive_json()
             action = msg.get("action")
             if action == "start_game" and game_phase == "lobby" and len(players) > 0:
-                global game_phase
                 game_phase = "active"
                 # แจ้งผู้เล่นทุกคนว่าเกมเริ่ม + แสดงปุ่มพร้อม
                 for pws in player_connections.values():
