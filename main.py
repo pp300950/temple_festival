@@ -67,7 +67,7 @@ MAIN_HTML = """
     <div id="game-status">รอเริ่มรอบ</div>
     <div id="players-grid"></div>
     
-    <button id="start-round-btn" onclick="startRound()" disabled>🔥 เริ่มรอบยิง! 🔥</button>
+    <button id="control-btn" onclick="controlAction()">เริ่มเกมส์</button>
     
     <canvas id="animation" width="900" height="600"></canvas>
     <div id="message"></div>
@@ -178,8 +178,18 @@ MAIN_HTML = """
                     </div>`
                 ).join('');
 
-                const startBtn = document.getElementById('start-round-btn');
-                startBtn.disabled = !(data.total_players > 0 && data.game_status === 'waiting');
+                const btn = document.getElementById('control-btn');
+            if (data.game_phase === 'lobby') {
+                btn.textContent = 'เริ่มเกมส์';
+                btn.onclick = () => ws.send(JSON.stringify({action: 'start_game'}));
+                btn.disabled = data.total_players === 0;
+            } else if (data.game_phase === 'active') {
+                btn.textContent = 'เริ่มรอบยิงใหม่';
+                btn.onclick = () => ws.send(JSON.stringify({action: 'start_round'}));
+                btn.disabled = false;
+            } else if (data.game_phase === 'ended') {
+                btn.disabled = true;
+            }
                 
                 document.getElementById('message').textContent = '';
                 drawScene();
@@ -258,6 +268,8 @@ PLAYER_HTML = """
         <input id="name" placeholder="ชื่อคุณ (เช่น แดนนี่)" />
         <button onclick="join()">เข้าร่วมเกม</button>
     </div>
+    
+    <div id="countdown" style="display:none; font-size:2em; color:#f00;"></div>
 
     <div id="game" style="display:none;">
         <h2>ปรับพลังงานอิเล็กตรอน</h2>
@@ -323,7 +335,20 @@ PLAYER_HTML = """
                     ready = false;
                     document.getElementById('ready-btn').textContent = 'ยืนยันพร้อมยิง!';
                     document.getElementById('status').textContent = 'ปรับพลังงานแล้วกดยืนยันเมื่อพร้อม';
-                }
+                } else if (msg.type === 'game_started') {
+            document.getElementById('status').textContent = 'เกมส์เริ่มแล้ว! ปรับพลังงานแล้วกดยืนยันพร้อม';
+            document.getElementById('ready-btn').style.display = 'inline-block'; // แสดงปุ่มพร้อม
+        } else if (msg.type === 'countdown_start') {
+            document.getElementById('countdown').style.display = 'block';
+            document.getElementById('countdown').textContent = `โปรดกดพร้อม! เหลือ ${msg.seconds} วินาที`;
+        } else if (msg.type === 'countdown_update') {
+            document.getElementById('countdown').textContent = `โปรดกดพร้อม! เหลือ ${msg.seconds} วินาที`;
+        } else if (msg.type === 'kicked_not_ready') {
+            showModal('ถูกเตะออก!', 'คุณไม่กดพร้อมภายในเวลา ระบบรีเซ็ตหน้า');
+            setTimeout(() => location.href = '/player', 2000);
+        }
+        
+       
             };
 
             document.getElementById('join-section').style.display = 'none';
@@ -362,6 +387,9 @@ PLAYER_HTML = """
         function closeModal() {
             document.getElementById('modal').style.display = 'none';
         }
+        
+         // ซ่อนปุ่มพร้อมตอนแรก
+        document.getElementById('ready-btn').style.display = 'none';
     </script>
 </body>
 </html>
@@ -496,6 +524,8 @@ WHEEL_HTML = """
 </html>
 """
 
+game_phase = "lobby"  # "lobby" (รอเริ่มเกมส์), "active" (เล่นหลายรอบ), "ended" (มีผู้ชนะ)
+
 @app.get("/", response_class=HTMLResponse)
 async def main_screen(request: Request):
     base_url = str(request.base_url).rstrip("/")
@@ -523,8 +553,8 @@ async def wheel_screen():
 
 @app.post("/join")
 async def join(request: Request):
-    if game_status == "playing":
-        return JSONResponse({"error": "เกมกำลังดำเนินอยู่ โปรดรอรอบใหม่"})
+    if game_phase in ["active", "ended"]:
+        return JSONResponse({"error": "เกมกำลังเล่นอยู่ โปรดรอรอบใหม่"})
     if len(players) >= MAX_PLAYERS:
         return JSONResponse({"error": "ห้องเต็มแล้ว โปรดรอสักครู่"})
     
@@ -546,27 +576,25 @@ async def ws_main(ws: WebSocket):
     try:
         while True:
             msg = await ws.receive_json()
-            if msg.get("type") == "control" and msg.get("action") == "start_round":
-                if game_status == "waiting" and len(players) > 0:
-                    if ready_count < len(players):
-                        missing = len(players) - ready_count
-                        # ส่ง start_failed ให้ทุกจอใหญ่
-                        for conn in main_connections.copy():
-                            try:
-                                await conn.send_json({"type": "start_failed", "data": {"missing": missing}})
-                            except:
-                                main_connections.remove(conn)
-                        # แจ้งผู้เล่นที่ยังไม่พร้อม
-                        for pid, p in players.items():
-                            if not p["ready"] and pid in player_connections:
-                                try:
-                                    await player_connections[pid].send_json({"type": "please_ready"})
-                                except:
-                                    pass
-                    else:
-                        game_status = "playing"
-                        await broadcast_state()
-                        await process_round()
+            action = msg.get("action")
+            if action == "start_game" and game_phase == "lobby" and len(players) > 0:
+                global game_phase
+                game_phase = "active"
+                # แจ้งผู้เล่นทุกคนว่าเกมเริ่ม + แสดงปุ่มพร้อม
+                for pws in player_connections.values():
+                    try:
+                        await pws.send_json({"type": "game_started"})
+                    except:
+                        pass
+                await broadcast_state()
+            elif action == "start_round" and game_phase == "active":
+                if ready_count < len(players):
+                    # เริ่ม countdown 10 วินาที + เตะคนไม่พร้อม
+                    asyncio.create_task(start_round_with_timeout())
+                else:
+                    game_status = "playing"
+                    await broadcast_state()
+                    await process_round()
     except WebSocketDisconnect:
         main_connections.remove(ws)
 
@@ -610,15 +638,56 @@ async def broadcast_state():
             "ready_count": ready_count,
             "total_players": len(players),
             "game_status": game_status,
+            "game_phase": game_phase,
             "winners": winners
         }
     }
+    
     for conn in main_connections.copy():
         try:
             await conn.send_json(data)
         except:
             main_connections.remove(conn)
-            
+
+async def start_round_with_timeout():
+    # แจ้ง countdown ให้ผู้เล่นที่ไม่พร้อม
+    not_ready_pids = [pid for pid, p in players.items() if not p["ready"]]
+    for pid in not_ready_pids:
+        if pid in player_connections:
+            try:
+                await player_connections[pid].send_json({"type": "countdown_start", "seconds": 10})
+            except:
+                pass
+    
+    # นับถอยหลัง 10 วินาที
+    for remaining in range(10, 0, -1):
+        await asyncio.sleep(1)
+        # อัปเดต countdown
+        for pid in not_ready_pids[:]:  # copy เพื่อ remove ระหว่าง loop
+            if pid in players and not players[pid]["ready"] and pid in player_connections:
+                try:
+                    await player_connections[pid].send_json({"type": "countdown_update", "seconds": remaining})
+                except:
+                    not_ready_pids.remove(pid)
+    
+    # ครบเวลา → เตะคนที่ยังไม่พร้อม
+    still_not_ready = [pid for pid in not_ready_pids if pid in players and not players[pid]["ready"]]
+    for pid in still_not_ready:
+        if pid in player_connections:
+            try:
+                await player_connections[pid].send_json({"type": "kicked_not_ready"})
+                await player_connections[pid].close()
+            except:
+                pass
+        players.pop(pid, None)
+        player_connections.pop(pid, None)
+    
+    # ถ้ายังมีผู้เล่นเหลือ → เริ่มรอบ
+    if len(players) > 0 and ready_count == len(players):
+        game_status = "playing"
+        await broadcast_state()
+        await process_round()
+        
 async def process_round():
     global winners, ready_count, game_status
     winners = []
@@ -646,6 +715,9 @@ async def process_round():
     has_winner = len(winners) > 0
     
     if has_winner:
+        global game_phase
+        game_phase = "ended"
+        
         await asyncio.sleep(10)
         winners = []
         # เพิ่มส่วนนี้เพื่อ clear display ทุกจอใหญ่ทันที
