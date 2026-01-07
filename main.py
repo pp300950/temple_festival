@@ -51,6 +51,43 @@ MAIN_HTML = """
         .modal-content { background: #222; padding: 30px; border-radius: 20px; text-align: center; max-width: 80%; }
         .modal-content h2 { color: #ff0; }
         .close-modal { padding: 10px 20px; background: #f00; color: #fff; border: none; border-radius: 10px; cursor: pointer; margin-top: 20px; }
+   #control-btn {
+    padding: 20px 40px;
+    font-size: 2em;
+    background: #0f0; /* เขียวสำหรับ "เริ่มเกมส์" (lobby) */
+    color: #000;
+    border: none;
+    border-radius: 20px;
+    cursor: pointer;
+    margin: 30px;
+    min-width: 300px;
+    box-shadow: 0 0 20px #0f0;
+    transition: all 0.3s;
+}
+
+#control-btn:hover {
+    background: #0d0;
+    box-shadow: 0 0 30px #0ff;
+}
+
+#control-btn:disabled {
+    background: #555;
+    color: #aaa;
+    cursor: not-allowed;
+    box-shadow: none;
+}
+
+/* เมื่อเป็น "active" (เริ่มรอบยิงใหม่) เปลี่ยนเป็นแดง */
+#control-btn.active-phase {
+    background: #f00; /* แดงสำหรับ "เริ่มรอบยิงใหม่" */
+    color: #fff;
+    box-shadow: 0 0 20px #f00;
+}
+
+#control-btn.active-phase:hover {
+    background: #d00;
+    box-shadow: 0 0 30px #ff0;
+}
     </style>
 </head>
 <body>
@@ -179,6 +216,7 @@ MAIN_HTML = """
                 ).join('');
 
                 const btn = document.getElementById('control-btn');
+                btn.classList.remove('active-phase');
             if (data.game_phase === 'lobby') {
                 btn.textContent = 'เริ่มเกมส์';
                 btn.onclick = () => ws.send(JSON.stringify({action: 'start_game'}));
@@ -187,6 +225,7 @@ MAIN_HTML = """
                 btn.textContent = 'เริ่มรอบยิงใหม่';
                 btn.onclick = () => ws.send(JSON.stringify({action: 'start_round'}));
                 btn.disabled = false;
+                btn.classList.add('active-phase');
             } else if (data.game_phase === 'ended') {
                 btn.disabled = true;
             }
