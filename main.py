@@ -278,6 +278,7 @@ async def ws_main(ws: WebSocket):
 
 @app.websocket("/ws/player/{pid}")
 async def ws_player(ws: WebSocket, pid: str):
+    global winner
     await ws.accept()
     if pid not in players:
         await ws.close()
@@ -317,6 +318,7 @@ async def broadcast_state():
         })
 
 async def broadcast_shot(pid, energy, result):
+    global winner
     if main_ws:
         await main_ws.send_json({
             "type": "shot",
