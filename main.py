@@ -10,14 +10,14 @@ import asyncio
 app = FastAPI()
 
 # Game state
-players = {}      # {player_id: {'name': str, 'energy': float}}
-queue = []        # list of player_ids
+players = {}      
+queue = []        
 target = 4.9
 winner = None
-main_ws = None    # WebSocket ของจอหลัก
-barrage_mode = False  # ถ้าอยากให้ยิงพร้อมกันทุกคน เปลี่ยนเป็น True
+main_ws = None    
+barrage_mode = False  
 
-# HTML ทั้งหมดฝังใน Python เลย
+# MAIN_HTML แก้ไข: เพิ่มลิงก์ข้อความ + แก้ protocol เป็น ws แทน wss
 MAIN_HTML = """
 <!DOCTYPE html>
 <html lang="th">
@@ -35,12 +35,18 @@ MAIN_HTML = """
         #message { font-size: 2em; min-height: 60px; color: #f0f; }
         #winner { font-size: 3em; color: #ff0; text-shadow: 0 0 20px #ff0; margin: 20px; }
         img { max-width: 300px; border: 5px solid #0ff; border-radius: 20px; margin: 20px; }
+        .link { font-size: 1.5em; margin: 20px; padding: 15px; background: rgba(0,255,255,0.2); border-radius: 15px; word-break: break-all; }
+        .copy-btn { padding: 10px 20px; font-size: 1.2em; background: #0f0; color: #000; border: none; border-radius: 10px; cursor: pointer; margin-top: 10px; }
     </style>
 </head>
 <body>
     <h1>🎯 Atomic Shooting Gallery 🎯</h1>
-    <h2>สแกน QR Code เพื่อยิงอิเล็กตรอนใส่ปรอท!</h2>
+    <h2>สแกน QR Code หรือคลิกลิงก์ด้านล่างเพื่อเล่น!</h2>
     <img src="data:image/png;base64,{{QR_BASE64}}" alt="QR Code">
+    
+    <div class="link" id="join-link">{{JOIN_URL}}</div>
+    <button class="copy-btn" onclick="copyLink()">คัดลอกลิงก์</button>
+
     <h2>คิวผู้เล่น:</h2>
     <ul id="queue"></ul>
     <canvas id="animation" width="900" height="500"></canvas>
@@ -49,7 +55,10 @@ MAIN_HTML = """
 
     <script src="https://cdn.jsdelivr.net/npm/reconnecting-websocket@4.4.0/dist/reconnecting-websocket.min.js"></script>
     <script>
-        const ws = new ReconnectingWebSocket(`wss://${location.host}/ws/main`);
+        // ใช้ ws:// แทน wss:// เพื่อให้รัน local ได้
+        const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+        const ws = new ReconnectingWebSocket(`${protocol}://${location.host}/ws/main`);
+        
         const canvas = document.getElementById('animation');
         const ctx = canvas.getContext('2d');
         const mercury = { x: canvas.width / 2, y: canvas.height / 2, r: 80 };
@@ -84,7 +93,6 @@ MAIN_HTML = """
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 drawMercury();
 
-                // อิเล็กตรอน
                 ctx.beginPath();
                 ctx.arc(x, y, 15, 0, Math.PI * 2);
                 ctx.fillStyle = '#00f';
@@ -95,8 +103,6 @@ MAIN_HTML = """
                 if (x >= mercury.x - mercury.r - 15) {
                     clearInterval(interval);
                     if (result === 'hit') {
-                        // ชนแล้วดูดกลืน + เรืองแสง
-                        ctx.fillStyle = 'rgba(255,255,0,0.8)';
                         for (let i = 0; i < 5; i++) {
                             setTimeout(() => {
                                 ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -109,7 +115,6 @@ MAIN_HTML = """
                         }
                         document.getElementById('message').textContent = '💥 เกิดการถ่ายเทพลังงาน! UV ปล่อยออกมาแล้ว!';
                     } else {
-                        // กระเด้ง
                         let bx = mercury.x + mercury.r + 15;
                         const bounceInt = setInterval(() => {
                             ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -126,11 +131,19 @@ MAIN_HTML = """
                 }
             }, 30);
         }
+
+        function copyLink() {
+            const link = document.getElementById('join-link').textContent;
+            navigator.clipboard.writeText(link).then(() => {
+                alert('คัดลอกลิงก์เรียบร้อย!');
+            });
+        }
     </script>
 </body>
 </html>
 """
 
+# PLAYER_HTML แก้ protocol เช่นกัน
 PLAYER_HTML = """
 <!DOCTYPE html>
 <html lang="th">
@@ -174,7 +187,11 @@ PLAYER_HTML = """
             const res = await fetch('/join', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name})});
             const data = await res.json();
             pid = data.player_id;
-            ws = new ReconnectingWebSocket(`wss://${location.host}/ws/player/${pid}`);
+
+            // แก้ตรงนี้: ใช้ ws:// แทน wss://
+            const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+            ws = new ReconnectingWebSocket(`${protocol}://${location.host}/ws/player/${pid}`);
+
             document.getElementById('game').style.display = 'block';
             joinQueue();
 
@@ -191,18 +208,24 @@ PLAYER_HTML = """
         function adj(d) {
             energy = Math.round((Math.max(4.5, Math.min(5.5, energy + d))) * 10) / 10;
             document.getElementById('energy').textContent = energy;
-            ws.send(JSON.stringify({action:'adjust', energy}));
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({action:'adjust', energy}));
+            }
         }
 
         function joinQueue() {
-            ws.send(JSON.stringify({action:'join_queue'}));
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({action:'join_queue'}));
+            }
             document.getElementById('qbtn').disabled = true;
             document.getElementById('sbtn').disabled = false;
             document.getElementById('status').textContent = 'อยู่ในคิวแล้ว รอถึงคิวคุณ!';
         }
 
         function shoot() {
-            ws.send(JSON.stringify({action:'shoot'}));
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({action:'shoot'}));
+            }
             document.getElementById('sbtn').disabled = true;
             document.getElementById('status').textContent = 'ยิงไปแล้ว... รอผลบนจอใหญ่!';
         }
@@ -213,7 +236,9 @@ PLAYER_HTML = """
 
 @app.get("/", response_class=HTMLResponse)
 async def main_screen(request: Request):
-    join_url = str(request.base_url) + "player"
+    base_url = str(request.base_url)
+    join_url = base_url + "player"
+    
     qr = qrcode.QRCode(box_size=10, border=4)
     qr.add_data(join_url)
     qr.make(fit=True)
@@ -221,7 +246,8 @@ async def main_screen(request: Request):
     buf = BytesIO()
     img.save(buf, format="PNG")
     qr_b64 = b64encode(buf.getvalue()).decode()
-    html = MAIN_HTML.replace("{{QR_BASE64}}", qr_b64)
+    
+    html = MAIN_HTML.replace("{{QR_BASE64}}", qr_b64).replace("{{JOIN_URL}}", join_url)
     return HTMLResponse(html)
 
 @app.get("/player", response_class=HTMLResponse)
@@ -234,6 +260,8 @@ async def join(request: Request):
     name = data["name"].strip()
     pid = str(uuid.uuid4())
     players[pid] = {"name": name, "energy": 4.5}
+    # ส่ง state update ทันทีเมื่อมีผู้เล่นใหม่
+    await broadcast_state()
     return {"player_id": pid}
 
 @app.websocket("/ws/main")
@@ -241,6 +269,8 @@ async def ws_main(ws: WebSocket):
     global main_ws
     await ws.accept()
     main_ws = ws
+    # ส่ง state ทันทีเมื่อจอหลักเชื่อมต่อ
+    await broadcast_state()
     try:
         while True:
             await asyncio.sleep(1)
@@ -263,26 +293,30 @@ async def ws_player(ws: WebSocket, pid: str):
                     players[pid]["energy"] = e
             elif msg["action"] == "join_queue" and pid not in queue:
                 queue.append(pid)
-            elif msg["action"] == "shoot" and (barrage_mode or queue and queue[0] == pid):
+                await broadcast_state()  # อัปเดตคิวทันที!
+            elif msg["action"] == "shoot" and (barrage_mode or (queue and queue[0] == pid)):
                 energy = players[pid]["energy"]
                 hit = abs(energy - target) <= 0.01
                 result = "hit" if hit else "miss"
                 if hit:
-                   
+                    global winner
                     winner = players[pid]["name"]
                 if not barrage_mode:
                     queue.pop(0)
                 await broadcast_shot(pid, energy, result)
                 await ws.send_json({"status": "shot", "result": result})
+                await broadcast_state()  # อัปเดตคิวหลังยิง
     except WebSocketDisconnect:
-        if pid in queue: queue.remove(pid)
+        if pid in queue: 
+            queue.remove(pid)
+            await broadcast_state()
         players.pop(pid, None)
 
 async def broadcast_state():
     if main_ws:
         await main_ws.send_json({
             "type": "state",
-            "data": {"queue": [players[p]["name"] for p in queue], "winner": winner}
+            "data": {"queue": [players.get(p, {"name": "???"})["name"] for p in queue], "winner": winner}
         })
 
 async def broadcast_shot(pid, energy, result):
@@ -293,9 +327,10 @@ async def broadcast_shot(pid, energy, result):
         })
     if winner:
         await asyncio.sleep(8)
-        
+        global winner
         winner = None
         queue.clear()
+        await broadcast_state()
 
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
