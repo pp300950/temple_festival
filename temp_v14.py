@@ -293,23 +293,16 @@ PLAYER_HTML = """
                 if (msg.type === 'round_start') {
                     document.getElementById('status').textContent = 'รอบเริ่มแล้ว! กำลังยิง...';
                 } else if (msg.type === 'result') {
-                if (msg.is_winner) {
-                    // ผู้ชนะ → แสดง modal แล้ว redirect ไปหมุนกงล้อ
-                    showModal('🎉 ยินดีด้วย! 🎉', 'คุณยิงถูกเป๊ะ!\\nไปหมุนกงล้อรางวัลกัน!', () => {
-                        location.href = '/wheel';
-                    });
-                } else {
-                    if (msg.has_winner_in_round) {
-                        // มีผู้ชนะในรอบนี้ (แต่ไม่ใช่คุณ) → แจ้งแล้ว kick ออกจากห้อง
-                        showModal('รอบนี้จบแล้ว!', 'มีผู้ชนะแล้ว รอรอบใหม่นะ\\nระบบจะพาคุณกลับหน้าเข้าร่วม', () => {
-                            location.href = '/player';
+                    if (msg.is_winner) {
+                        showModal('🎉 ยินดีด้วย! 🎉', 'คุณยิงถูกเป๊ะ!\\nไปหมุนกงล้อรางวัลกัน!', () => {
+                            location.href = '/wheel';
                         });
                     } else {
-                        // ไม่มีผู้ชนะ → แสดงพลาด แต่ไม่ redirect อยู่ต่อเล่นรอบถัดไป
-                        showModal('พลาด!', `คุณยิง ${msg.energy} eV (พลาดไปนิดเดียว)\\nปรับค่าแล้วลุ้นรอบใหม่ได้เลย`);
+                        showModal('พลาด!', `คุณยิง ${msg.energy} eV (พลาดไปนิดเดียว)\\nรอรอบใหม่เพื่อลุ้นต่อ`, () => {
+                            location.href = '/player';
+                        });
                     }
-                }
-            } else if (msg.type === 'please_ready') {
+                } else if (msg.type === 'please_ready') {
                     showModal('โปรดกดพร้อม!', 'หัวห้องต้องการเริ่มเกม แต่คุณยังไม่ได้กดยืนยันพร้อม');
                 } else if (msg.type === 'round_end') {
                     ready = false;
@@ -592,52 +585,44 @@ async def process_round():
         await broadcast_shot(name, energy, "hit" if hit_result else "miss")
         await asyncio.sleep(6)
     
-    has_winner = len(winners) > 0
-    
-    if has_winner:
+    if winners:
         for conn in main_connections.copy():
             try:
                 await conn.send_json({"type": "winners_announce", "data": {"winners": winners}})
             except:
                 main_connections.remove(conn)
     
-    if not has_winner:
+    if not winners:
         for conn in main_connections.copy():
             try:
                 await conn.send_json({"type": "all_shots_done"})
             except:
                 main_connections.remove(conn)
-    
-    # ส่งผลให้ผู้เล่นแต่ละคน
+                
     for pid, name, energy, is_winner in results:
         if pid in player_connections:
             try:
                 await player_connections[pid].send_json({
                     "type": "result",
                     "is_winner": is_winner,
-                    "energy": energy,
-                    "has_winner_in_round": has_winner  # flag ใหม่เพื่อให้ JS รู้ว่ารอบนี้มีผู้ชนะไหม
+                    "energy": energy
                 })
             except:
                 pass
     
-    # ส่ง round_end เสมอ เพื่อรีเซ็ตปุ่มพร้อม
     for pws in player_connections.values():
         try:
             await pws.send_json({"type": "round_end"})
         except:
             pass
     
-    # รีเซ็ต ready เสมอ (เล่นรอบใหม่ได้ทันทีถ้ายังไม่มีผู้ชนะ)
+    game_status = "waiting"
     ready_count = 0
     for p in players.values():
         p["ready"] = False
-    
-    game_status = "waiting"
     await broadcast_state()
     
-    # ถ้ามีผู้ชนะ → รอแสดงผลสักพัก แล้ว clear winners (ไม่ clear players เพราะ redirect จะ disconnect เอง)
-    if has_winner:
+    if winners:
         await asyncio.sleep(10)
         winners = []
         await broadcast_state()
