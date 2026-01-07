@@ -11,12 +11,13 @@ import os
 app = FastAPI()
 
 # Game state
-players = {}      # pid -> {"name": str, "energy": float, "ready": bool}
+players = {}  # pid -> {"name": str, "energy": float, "ready": bool}
+player_connections = {}  # pid -> WebSocket (สำหรับส่งข้อความส่วนตัว)
 ready_count = 0
 winner = None
 main_ws = None
+game_status = "waiting"  # "waiting" หรือ "playing"
 target = 4.9
-MAX_PLAYERS = 6  # สามารถเปลี่ยนได้ตามต้องการ
 
 MAIN_HTML = """
 <!DOCTYPE html>
@@ -36,10 +37,13 @@ MAIN_HTML = """
         #message { font-size: 2em; min-height: 60px; color: #f0f; }
         #winner { font-size: 3em; color: #ff0; text-shadow: 0 0 20px #ff0; margin: 20px; }
         #ready-count { font-size: 2.5em; color: #0f0; margin: 20px; }
+        #game-status { font-size: 2em; color: #ff0; margin: 20px; }
         img { max-width: 300px; border: 5px solid #0ff; border-radius: 20px; margin: 20px; }
         .link { font-size: 1.5em; margin: 20px; padding: 15px; background: rgba(0,255,255,0.2); border-radius: 15px; word-break: break-all; }
         .copy-btn { padding: 10px 20px; font-size: 1.2em; background: #0f0; color: #000; border: none; border-radius: 10px; cursor: pointer; margin: 10px; }
         .btn { padding: 15px 30px; font-size: 1.5em; background: #00f; color: #fff; border: none; border-radius: 15px; cursor: pointer; margin: 20px; text-decoration: none; display: inline-block; }
+        #start-round-btn { padding: 20px 40px; font-size: 2em; background: #f00; color: #fff; border: none; border-radius: 20px; cursor: pointer; margin: 30px; }
+        #start-round-btn:disabled { background: #555; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -62,9 +66,12 @@ MAIN_HTML = """
         </div>
     </div>
 
-    <h2>ผู้เล่นในห้องปัจจุบัน ({{READY_COUNT}}/{{MAX_PLAYERS}} พร้อม):</h2>
-    <div id="ready-count">{{READY_COUNT}}/{{MAX_PLAYERS}}</div>
+    <h2>ผู้เล่นในห้องปัจจุบัน:</h2>
+    <div id="ready-count">{{READY_COUNT}}/{{TOTAL_PLAYERS}} พร้อม</div>
+    <div id="game-status">รอเริ่มรอบ</div>
     <ul id="players"></ul>
+    
+    <button id="start-round-btn" onclick="startRound()" disabled>🔥 เริ่มรอบยิง! 🔥</button>
     
     <canvas id="animation" width="900" height="500"></canvas>
     <div id="message"></div>
@@ -93,11 +100,19 @@ MAIN_HTML = """
             const msg = JSON.parse(e.data);
             if (msg.type === 'state') {
                 const data = msg.data;
-                document.getElementById('ready-count').textContent = `${data.ready_count}/${data.max_players}`;
+                document.getElementById('ready-count').textContent = `${data.ready_count}/${data.total_players} พร้อม`;
+                document.getElementById('game-status').textContent = data.game_status === 'playing' ? 'กำลังยิง...' : 'รอเริ่มรอบ';
                 document.getElementById('players').innerHTML = data.players.map(p => 
                     `<li class="${p.ready ? 'ready' : ''}">🔫 ${p.name} (${p.energy} eV) ${p.ready ? '✅' : ''}</li>`
                 ).join('');
                 document.getElementById('winner').textContent = data.winner ? `🏆 ชนะเลิศ: ${data.winner} 🏆` : '';
+                
+                const startBtn = document.getElementById('start-round-btn');
+                if (data.total_players > 0 && data.game_status === 'waiting') {
+                    startBtn.disabled = false;
+                } else {
+                    startBtn.disabled = true;
+                }
             } else if (msg.type === 'shot') {
                 document.getElementById('message').textContent = 
                     `${msg.data.player} ยิงอิเล็กตรอน ${msg.data.energy} eV ! ${msg.data.result === 'hit' ? '💥 ถูกต้อง!' : ''}`;
@@ -154,6 +169,10 @@ MAIN_HTML = """
             }, 30);
         }
 
+        function startRound() {
+            ws.send(JSON.stringify({type: "control", action: "start_round"}));
+        }
+
         function copyLink() {
             const link = document.getElementById('join-link').textContent;
             navigator.clipboard.writeText(link).then(() => alert('คัดลอกลิงก์เรียบร้อย!'));
@@ -182,11 +201,14 @@ PLAYER_HTML = """
 </head>
 <body>
     <h1>🔫 ปืนอิเล็กตรอนของคุณ</h1>
-    <input id="name" placeholder="ชื่อคุณ (เช่น แดนนี่)" />
-    <button onclick="join()">เข้าร่วมเกม</button>
+    
+    <div id="join-section">
+        <input id="name" placeholder="ชื่อคุณ (เช่น แดนนี่)" />
+        <button onclick="join()">เข้าร่วมเกม</button>
+    </div>
 
     <div id="game" style="display:none;">
-        <h2>ปรับพลังงานอิเล็กตรอน (เป้าหมายแอบไว้ที่ ~4.9 eV)</h2>
+        <h2>ปรับพลังงานอิเล็กตรอน (เป้าหมาย ~4.9 eV)</h2>
         <div id="energy">4.5</div>
         <button onclick="adj(-0.1)">−0.1</button>
         <button onclick="adj(0.1)">+0.1</button>
@@ -209,23 +231,24 @@ PLAYER_HTML = """
             const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
             ws = new ReconnectingWebSocket(`${protocol}://${location.host}/ws/player/${pid}`);
 
+            document.getElementById('join-section').style.display = 'none';
             document.getElementById('game').style.display = 'block';
             document.getElementById('status').textContent = 'ปรับพลังงานแล้วกดยืนยันเมื่อพร้อม';
 
             ws.onmessage = (e) => {
                 const msg = JSON.parse(e.data);
-                if (msg.type === 'result') {
+                if (msg.type === 'round_start') {
+                    document.getElementById('status').textContent = 'รอบเริ่มแล้ว! กำลังยิง...';
+                } else if (msg.type === 'result') {
                     if (msg.hit) {
                         alert('🎉 ยิงถูกเป๊ะ 4.9 eV! คุณคือผู้ชนะ!!! 🏆');
                         document.getElementById('status').textContent = 'คุณชนะรอบนี้!';
                     } else {
-                        alert(`พลาดไปนิดเดียว (${msg.energy} eV)! ปรับค่าใหม่แล้วยืนยันอีกครั้งในรอบถัดไป`);
-                        document.getElementById('status').textContent = 'พลาด! รอรอบใหม่เพื่อยิงอีกครั้ง';
+                        alert(`พลาดไปนิดเดียว (${msg.energy} eV)! ปรับค่าใหม่ในรอบถัดไป`);
+                        document.getElementById('status').textContent = 'พลาด! รอรอบใหม่...';
                     }
                     ready = false;
                     document.getElementById('ready-btn').textContent = 'ยืนยันพร้อมยิง!';
-                } else if (msg.type === 'round_start') {
-                    document.getElementById('status').textContent = 'ทุกคนพร้อม! กำลังยิงพร้อมกัน...';
                 }
             };
         }
@@ -243,7 +266,7 @@ PLAYER_HTML = """
                 ready = !ready;
                 ws.send(JSON.stringify({action: 'ready', ready}));
                 document.getElementById('ready-btn').textContent = ready ? 'ยกเลิกพร้อม' : 'ยืนยันพร้อมยิง!';
-                document.getElementById('status').textContent = ready ? 'พร้อมยิงแล้ว! รอคนอื่น...' : 'กำลังปรับพลังงาน...';
+                document.getElementById('status').textContent = ready ? 'พร้อมยิงแล้ว! รอหัวห้องเริ่ม...' : 'กำลังปรับพลังงาน...';
             }
         }
     </script>
@@ -257,7 +280,6 @@ async def main_screen(request: Request):
     main_url = base_url + "/"
     join_url = base_url + "/player"
     
-    # QR for player
     qr_player = qrcode.QRCode(box_size=10, border=4)
     qr_player.add_data(join_url)
     qr_player.make(fit=True)
@@ -266,7 +288,6 @@ async def main_screen(request: Request):
     img_player.save(buf_player, format="PNG")
     qr_player_b64 = b64encode(buf_player.getvalue()).decode()
     
-    # QR for main screen
     qr_main = qrcode.QRCode(box_size=10, border=4)
     qr_main.add_data(main_url)
     qr_main.make(fit=True)
@@ -275,13 +296,15 @@ async def main_screen(request: Request):
     img_main.save(buf_main, format="PNG")
     qr_main_b64 = b64encode(buf_main.getvalue()).decode()
     
-    ready_c = len([p for p in players.values() if p.get("ready", False)])
+    current_ready = len([p for p in players.values() if p.get("ready", False)])
+    total_players = len(players)
+    
     html = MAIN_HTML.replace("{{QR_PLAYER_BASE64}}", qr_player_b64)\
                     .replace("{{QR_MAIN_BASE64}}", qr_main_b64)\
                     .replace("{{JOIN_URL}}", join_url)\
                     .replace("{{MAIN_URL}}", main_url)\
-                    .replace("{{READY_COUNT}}", str(ready_c))\
-                    .replace("{{MAX_PLAYERS}}", str(MAX_PLAYERS))
+                    .replace("{{READY_COUNT}}", str(current_ready))\
+                    .replace("{{TOTAL_PLAYERS}}", str(total_players))
     return HTMLResponse(html)
 
 @app.get("/player", response_class=HTMLResponse)
@@ -299,23 +322,29 @@ async def join(request: Request):
 
 @app.websocket("/ws/main")
 async def ws_main(ws: WebSocket):
-    global main_ws
+    global main_ws, game_status
     await ws.accept()
     main_ws = ws
     await broadcast_state()
     try:
         while True:
-            await ws.receive_text()  # keep alive
+            msg = await ws.receive_json()
+            if msg.get("type") == "control" and msg.get("action") == "start_round":
+                if game_status == "waiting" and len(players) > 0:
+                    game_status = "playing"
+                    await broadcast_state()
+                    await process_round()
     except WebSocketDisconnect:
         main_ws = None
 
 @app.websocket("/ws/player/{pid}")
 async def ws_player(ws: WebSocket, pid: str):
-    global ready_count, winner
+    global ready_count, player_connections
     if pid not in players:
         await ws.close()
         return
     await ws.accept()
+    player_connections[pid] = ws
     try:
         while True:
             msg = await ws.receive_json()
@@ -332,12 +361,11 @@ async def ws_player(ws: WebSocket, pid: str):
                 elif not msg["ready"] and was_ready:
                     ready_count -= 1
                 await broadcast_state()
-                if ready_count == len(players) and len(players) > 0:
-                    await process_round(ws)  # pass one ws to send round_start if needed
     except WebSocketDisconnect:
         if players[pid]["ready"]:
             ready_count -= 1
         players.pop(pid, None)
+        player_connections.pop(pid, None)
         await broadcast_state()
 
 async def broadcast_state():
@@ -348,18 +376,22 @@ async def broadcast_state():
             "data": {
                 "players": player_list,
                 "ready_count": ready_count,
-                "winner": winner,
-                "max_players": MAX_PLAYERS
+                "total_players": len(players),
+                "game_status": game_status,
+                "winner": winner
             }
         })
 
-async def process_round(sample_player_ws=None):
-    global winner, ready_count
-    # แจ้งผู้เล่นว่ารอบเริ่ม (optional)
-    if sample_player_ws:
-        await sample_player_ws.send_json({"type": "round_start"})
+async def process_round():
+    global winner, ready_count, game_status
+    # แจ้งผู้เล่นทุกรายว่ารอบเริ่ม
+    for pws in player_connections.values():
+        try:
+            await pws.send_json({"type": "round_start"})
+        except:
+            pass
     
-    await asyncio.sleep(2)  # ให้เวลาเห็นข้อความ
+    await asyncio.sleep(2)
     
     results = []
     for pid, p in players.items():
@@ -369,25 +401,29 @@ async def process_round(sample_player_ws=None):
         if hit:
             winner = p["name"]
     
-    # ยิงทีละคนบนจอใหญ่ (sequential animation)
+    # ยิงทีละคนบนจอใหญ่
     for _, name, energy, hit_result in results:
         await broadcast_shot(name, energy, "hit" if hit_result else "miss")
-        await asyncio.sleep(4)  # เวลาให้ animation เสร็จ + พัก
+        await asyncio.sleep(4)
     
     if not winner:
-        await main_ws.send_json({"type": "all_shots_done"})
+        if main_ws:
+            await main_ws.send_json({"type": "all_shots_done"})
     
-    # แจ้งผลกลับให้แต่ละผู้เล่น
-    for pid, _, energy, hit in results:
-        player_ws = None  # ไม่เก็บ ws ต่อ pid แต่ส่งผ่าน broadcast ถ้ามีหลาย ws ไม่ได้ แต่เนื่องจาก main_ws เดียว
-        # เนื่องจากไม่มีเก็บ player_ws, ส่งไม่ได้เฉพาะเจาะจง แต่ผู้เล่นรู้จาก alert ใน onmessage ก่อนหน้าไม่ได้
-        # รอ เราไม่ได้เก็บ ws ต่อ pid, แต่สามารถส่ง broadcast ถ้าต้องการ แต่เพื่อ simplicity, ผู้เล่นเห็นผลบนจอใหญ่ + alert ถ้ามี winner
-        # แต่ตามบรีฟ ต้องการแจ้งมือถือด้วยว่าพลาดให้ปรับใหม่
-        # ปรับ: ใน process_round ส่ง broadcast_shot แล้ว player ไม่ได้รับ
-        # player ws ไม่ได้รับ broadcast
-        # แก้: เก็บ player_ws dict
-    # ขออภัย ต้องเพิ่ม global player_ws = {}
-    # แต่เพื่อความสั้น ผมปรับให้หลังยิงเสร็จ reset ready ทุกคน
+    # แจ้งผลส่วนตัวให้ผู้เล่นแต่ละคน
+    for pid, name, energy, hit in results:
+        if pid in player_connections:
+            try:
+                await player_connections[pid].send_json({
+                    "type": "result",
+                    "hit": hit,
+                    "energy": energy
+                })
+            except:
+                pass
+    
+    # รีเซ็ตสถานะสำหรับรอบใหม่
+    game_status = "waiting"
     ready_count = 0
     for p in players.values():
         p["ready"] = False
