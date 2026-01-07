@@ -268,7 +268,7 @@ async def ws_player(ws: WebSocket, pid: str):
                 hit = abs(energy - target) <= 0.01
                 result = "hit" if hit else "miss"
                 if hit:
-                    global winner
+                   
                     winner = players[pid]["name"]
                 if not barrage_mode:
                     queue.pop(0)
@@ -293,7 +293,7 @@ async def broadcast_shot(pid, energy, result):
         })
     if winner:
         await asyncio.sleep(8)
-        global winner
+        
         winner = None
         queue.clear()
 
