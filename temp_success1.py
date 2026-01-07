@@ -19,7 +19,7 @@ winners = []  # list of winner names (รองรับหลายคน)
 main_connections = set()
 game_status = "waiting"  # "waiting" หรือ "playing"
 target = 4.9
-MAX_PLAYERS = 10  # จำนวนผู้เล่นสูงสุด (ปรับได้)
+MAX_PLAYERS = 20  # จำนวนผู้เล่นสูงสุด (ปรับได้)
 
 MAIN_HTML = """
 <!DOCTYPE html>
@@ -383,107 +383,64 @@ WHEEL_HTML = """
     <button id="spin-btn" onclick="spin()">หมุน!</button>
     <div id="result"></div>
 
-    <!-- แก้เฉพาะส่วน <script> ใน WHEEL_HTML ทั้งหมด (แทนที่ script เดิมทั้งหมด) -->
-<script>
-    const canvas = document.getElementById('wheel');
-    const ctx = canvas.getContext('2d');
-    const sectors = ['1 ลูกอม', '2 ลูกอม', '3 ลูกอม', '4 ลูกอม', '5 ลูกอม', 'รางวัลปริศนา'];
-    const colors = ['#ff0', '#0f0', '#0ff', '#f0f', '#ff69b4', '#ffa500']; // ปรับสีให้ชัดขึ้น
-    let currentAngle = 0;
-    let spinning = false;
+    <script>
+        const canvas = document.getElementById('wheel');
+        const ctx = canvas.getContext('2d');
+        const sectors = ['1 ลูกอม', '2 ลูกอม', '3 ลูกอม', '4 ลูกอม', '5 ลูกอม', 'รางวัลปริศนา'];
+        const colors = ['#ff0', '#0f0', '#0ff', '#f0f', '#ff5', '#f80'];
+        let currentAngle = 0;
+        let spinning = false;
 
-    function drawWheel() {
-        const numSectors = sectors.length;
-        const angleStep = (Math.PI * 2) / numSectors;
-
-        // Clear และวาดพื้นวงล้อ
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.beginPath();
-        ctx.arc(200, 200, 200, 0, Math.PI * 2);
-        ctx.fillStyle = '#222';
-        ctx.fill();
-        ctx.strokeStyle = '#0ff';
-        ctx.lineWidth = 8;
-        ctx.stroke();
-
-        // วาดแต่ละภาค
-        sectors.forEach((text, i) => {
+        function drawWheel() {
+            const angleStep = (Math.PI * 2) / sectors.length;
+            sectors.forEach((text, i) => {
+                ctx.beginPath();
+                ctx.fillStyle = colors[i];
+                ctx.moveTo(200, 200);
+                ctx.arc(200, 200, 200, currentAngle + i*angleStep, currentAngle + (i+1)*angleStep);
+                ctx.fill();
+                ctx.save();
+                ctx.translate(200, 200);
+                ctx.rotate(currentAngle + i*angleStep + angleStep/2);
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 24px Arial';
+                ctx.fillText(text, 80, 10);
+                ctx.restore();
+            });
+            // Pointer
             ctx.beginPath();
-            ctx.fillStyle = colors[i];
-            ctx.moveTo(200, 200);
-            ctx.arc(200, 200, 200, currentAngle + i * angleStep, currentAngle + (i + 1) * angleStep);
-            ctx.lineTo(200, 200);
+            ctx.moveTo(380, 200);
+            ctx.lineTo(340, 180);
+            ctx.lineTo(340, 220);
+            ctx.fillStyle = '#f00';
             ctx.fill();
+        }
 
-            // ข้อความในภาค
-            ctx.save();
-            ctx.translate(200, 200);
-            ctx.rotate(currentAngle + i * angleStep + angleStep / 2);
-            ctx.fillStyle = '#000';
-            ctx.font = 'bold 26px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(text, 110, 10);
-            ctx.restore();
-        });
-
-        // ลูกศรชี้ (ใหญ่ ชัด เต็มภาค)
-        ctx.beginPath();
-        ctx.moveTo(390, 200);
-        ctx.lineTo(340, 170);
-        ctx.lineTo(340, 230);
-        ctx.closePath();
-        ctx.fillStyle = '#f00';
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 4;
-        ctx.stroke();
-    }
-
-    function spin() {
-        if (spinning) return;
-        spinning = true;
-        document.getElementById('spin-btn').disabled = true;
-
-        const numSectors = sectors.length;
-        const randomSector = Math.floor(Math.random() * numSectors); // เลือกภาคล่วงหน้าเพื่อความแม่นยำ 100%
-        const anglePerSector = 360 / numSectors;
-        const targetAngle = randomSector * anglePerSector + anglePerSector / 2; // ชี้กลางภาคพอดี
-
-        const fullRotations = 4 + Math.random() * 3; // หมุน 4-7 รอบ (เร็วขึ้น ไม่นานเกิน)
-        const totalSpinAngle = fullRotations * 360 + targetAngle;
-
-        let startAngle = currentAngle % 360;
-        if (startAngle < 0) startAngle += 360;
-
-        let elapsed = 0;
-        const duration = 3500; // หมุน 3.5 วินาที (เร็วขึ้นแต่ยังตื่นเต้น)
-
-        const animate = () => {
-            elapsed += 20;
-            const progress = Math.min(elapsed / duration, 1);
-            // Ease-out แรงเพื่อช้าลงสวย
-            const easeProgress = 1 - Math.pow(1 - progress, 4);
-
-            currentAngle = startAngle + totalSpinAngle * easeProgress;
-
-            drawWheel();
-
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            } else {
-                // Snap เข้ากลางภาคพอดี
-                currentAngle = targetAngle;
+        function spin() {
+            if (spinning) return;
+            spinning = true;
+            document.getElementById('spin-btn').disabled = true;
+            const spinAngle = 3600 + Math.random() * 3600;
+            let startAngle = currentAngle;
+            let time = 0;
+            const duration = 5000;
+            const anim = setInterval(() => {
+                time += 30;
+                const progress = Math.min(time / duration, 1);
+                const ease = 1 - Math.pow(1 - progress, 3);
+                currentAngle = startAngle + spinAngle * ease;
                 drawWheel();
-                document.getElementById('result').innerHTML = `<strong>เย่! คุณได้ ${sectors[randomSector]} 🍬🎉</strong>`;
-                spinning = false;
-            }
-        };
+                if (progress >= 1) {
+                    clearInterval(anim);
+                    const finalSector = Math.floor(((360 - (currentAngle % 360)) / 360) * sectors.length);
+                    document.getElementById('result').textContent = `เย่! คุณได้ ${sectors[finalSector]} 🍬`;
+                    spinning = false;
+                }
+            }, 30);
+        }
 
-        requestAnimationFrame(animate);
-    }
-
-    drawWheel(); // วาดครั้งแรกรอหมุน
-</script>
+        drawWheel();
+    </script>
 </body>
 </html>
 """
