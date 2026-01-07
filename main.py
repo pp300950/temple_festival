@@ -6,6 +6,7 @@ from io import BytesIO
 from base64 import b64encode
 import uuid
 import asyncio
+import os  # เพิ่มสำหรับ Render
 
 app = FastAPI()
 
@@ -17,7 +18,6 @@ winner = None
 main_ws = None    
 barrage_mode = False  
 
-# MAIN_HTML แก้ไข: เพิ่มลิงก์ข้อความ + แก้ protocol เป็น ws แทน wss
 MAIN_HTML = """
 <!DOCTYPE html>
 <html lang="th">
@@ -55,7 +55,6 @@ MAIN_HTML = """
 
     <script src="https://cdn.jsdelivr.net/npm/reconnecting-websocket@4.4.0/dist/reconnecting-websocket.min.js"></script>
     <script>
-        // ใช้ ws:// แทน wss:// เพื่อให้รัน local ได้
         const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new ReconnectingWebSocket(`${protocol}://${location.host}/ws/main`);
         
@@ -143,7 +142,6 @@ MAIN_HTML = """
 </html>
 """
 
-# PLAYER_HTML แก้ protocol เช่นกัน
 PLAYER_HTML = """
 <!DOCTYPE html>
 <html lang="th">
@@ -188,7 +186,6 @@ PLAYER_HTML = """
             const data = await res.json();
             pid = data.player_id;
 
-            // แก้ตรงนี้: ใช้ ws:// แทน wss://
             const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
             ws = new ReconnectingWebSocket(`${protocol}://${location.host}/ws/player/${pid}`);
 
@@ -260,7 +257,6 @@ async def join(request: Request):
     name = data["name"].strip()
     pid = str(uuid.uuid4())
     players[pid] = {"name": name, "energy": 4.5}
-    # ส่ง state update ทันทีเมื่อมีผู้เล่นใหม่
     await broadcast_state()
     return {"player_id": pid}
 
@@ -269,7 +265,6 @@ async def ws_main(ws: WebSocket):
     global main_ws
     await ws.accept()
     main_ws = ws
-    # ส่ง state ทันทีเมื่อจอหลักเชื่อมต่อ
     await broadcast_state()
     try:
         while True:
@@ -293,19 +288,18 @@ async def ws_player(ws: WebSocket, pid: str):
                     players[pid]["energy"] = e
             elif msg["action"] == "join_queue" and pid not in queue:
                 queue.append(pid)
-                await broadcast_state()  # อัปเดตคิวทันที!
+                await broadcast_state()
             elif msg["action"] == "shoot" and (barrage_mode or (queue and queue[0] == pid)):
                 energy = players[pid]["energy"]
                 hit = abs(energy - target) <= 0.01
                 result = "hit" if hit else "miss"
                 if hit:
-                    global winner
-                    winner = players[pid]["name"]
+                    winner = players[pid]["name"]  # ลบ global winner ออกหมดแล้ว
                 if not barrage_mode:
                     queue.pop(0)
                 await broadcast_shot(pid, energy, result)
                 await ws.send_json({"status": "shot", "result": result})
-                await broadcast_state()  # อัปเดตคิวหลังยิง
+                await broadcast_state()
     except WebSocketDisconnect:
         if pid in queue: 
             queue.remove(pid)
@@ -327,10 +321,11 @@ async def broadcast_shot(pid, energy, result):
         })
     if winner:
         await asyncio.sleep(8)
-        global winner
-        winner = None
+        winner = None   # ลบ global winner ออกหมดแล้ว
         queue.clear()
         await broadcast_state()
 
+# สำคัญมากสำหรับ Render.com
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port)
