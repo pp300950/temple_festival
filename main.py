@@ -689,7 +689,8 @@ async def start_round_with_timeout():
         await process_round()
         
 async def process_round():
-    global winners, ready_count, game_status
+    global winners, ready_count, game_status, game_phase  # ย้ายมาบนสุด
+    
     winners = []
     
     for pws in player_connections.values():
@@ -715,12 +716,10 @@ async def process_round():
     has_winner = len(winners) > 0
     
     if has_winner:
-        global game_phase
-        game_phase = "ended"
+        game_phase = "ended"  # ลบ global ที่นี่
         
         await asyncio.sleep(10)
         winners = []
-        # เพิ่มส่วนนี้เพื่อ clear display ทุกจอใหญ่ทันที
         for conn in main_connections.copy():
             try:
                 await conn.send_json({"type": "clear_display"})
