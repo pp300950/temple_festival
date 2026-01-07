@@ -53,8 +53,8 @@ MAIN_HTML = """
     <div id="message"></div>
     <h2 id="winner"></h2>
 
-    <!-- แก้ URL CDN ให้ถูกต้อง -->
-    <script src="https://cdn.jsdelivr.net/npm/reconnecting-websocket@4.4.0/reconnecting-websocket.min.js"></script>
+    <!-- เปลี่ยนเป็น CDN ที่ใช้งานได้จริงจาก cdnjs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"></script>
     <script>
         const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new ReconnectingWebSocket(`${protocol}://${location.host}/ws/main`);
@@ -176,8 +176,8 @@ PLAYER_HTML = """
         <p id="status">สถานะ: รอเข้าร่วม</p>
     </div>
 
-    <!-- แก้ URL CDN ให้ถูกต้อง -->
-    <script src="https://cdn.jsdelivr.net/npm/reconnecting-websocket@4.4.0/reconnecting-websocket.min.js"></script>
+    <!-- เปลี่ยนเป็น CDN ที่ใช้งานได้จริงจาก cdnjs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"></script>
     <script>
         let pid, energy = 4.5, ws;
 
@@ -233,8 +233,7 @@ PLAYER_HTML = """
 </html>
 """
 
-# ส่วน backend เหมือนเดิมทุกอย่าง (ไม่มี global winner แล้ว และใช้ PORT สำหรับ Render)
-
+# Backend เหมือนเดิมทุกบรรทัด
 @app.get("/", response_class=HTMLResponse)
 async def main_screen(request: Request):
     base_url = str(request.base_url)
