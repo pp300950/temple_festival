@@ -6,7 +6,7 @@ from io import BytesIO
 from base64 import b64encode
 import uuid
 import asyncio
-import os  # เพิ่มสำหรับ Render
+import os
 
 app = FastAPI()
 
@@ -53,7 +53,8 @@ MAIN_HTML = """
     <div id="message"></div>
     <h2 id="winner"></h2>
 
-    <script src="https://cdn.jsdelivr.net/npm/reconnecting-websocket@4.4.0/dist/reconnecting-websocket.min.js"></script>
+    <!-- แก้ URL CDN ให้ถูกต้อง -->
+    <script src="https://cdn.jsdelivr.net/npm/reconnecting-websocket@4.4.0/reconnecting-websocket.min.js"></script>
     <script>
         const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
         const ws = new ReconnectingWebSocket(`${protocol}://${location.host}/ws/main`);
@@ -175,7 +176,8 @@ PLAYER_HTML = """
         <p id="status">สถานะ: รอเข้าร่วม</p>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/reconnecting-websocket@4.4.0/dist/reconnecting-websocket.min.js"></script>
+    <!-- แก้ URL CDN ให้ถูกต้อง -->
+    <script src="https://cdn.jsdelivr.net/npm/reconnecting-websocket@4.4.0/reconnecting-websocket.min.js"></script>
     <script>
         let pid, energy = 4.5, ws;
 
@@ -230,6 +232,8 @@ PLAYER_HTML = """
 </body>
 </html>
 """
+
+# ส่วน backend เหมือนเดิมทุกอย่าง (ไม่มี global winner แล้ว และใช้ PORT สำหรับ Render)
 
 @app.get("/", response_class=HTMLResponse)
 async def main_screen(request: Request):
@@ -294,7 +298,7 @@ async def ws_player(ws: WebSocket, pid: str):
                 hit = abs(energy - target) <= 0.01
                 result = "hit" if hit else "miss"
                 if hit:
-                    winner = players[pid]["name"]  # ลบ global winner ออกหมดแล้ว
+                    winner = players[pid]["name"]
                 if not barrage_mode:
                     queue.pop(0)
                 await broadcast_shot(pid, energy, result)
@@ -321,11 +325,10 @@ async def broadcast_shot(pid, energy, result):
         })
     if winner:
         await asyncio.sleep(8)
-        winner = None   # ลบ global winner ออกหมดแล้ว
+        winner = None
         queue.clear()
         await broadcast_state()
 
-# สำคัญมากสำหรับ Render.com
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
