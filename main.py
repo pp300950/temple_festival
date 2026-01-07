@@ -114,10 +114,9 @@ MAIN_HTML = """
             drawScene();
             let x = 0;
             const y = mercury.y;
-            const speed = 10;  // ช้าลง
+            const speed = 10;
             let interval = setInterval(() => {
                 drawScene();
-                // อิเล็กตรอน
                 ctx.beginPath();
                 ctx.arc(x, y, 18, 0, Math.PI * 2);
                 ctx.fillStyle = '#00f';
@@ -136,7 +135,7 @@ MAIN_HTML = """
                     document.getElementById('message').textContent = `${playerName} ยิง ${energy} eV`;
                     if (result === 'hit') {
                         document.getElementById('message').textContent += ' → 💥 ถูกเป๊ะ! 💥';
-                        for (let i = 0; i < 10; i++) {  // effect นานขึ้น
+                        for (let i = 0; i < 10; i++) {
                             setTimeout(() => {
                                 drawScene();
                                 ctx.beginPath();
@@ -155,11 +154,11 @@ MAIN_HTML = """
                             ctx.fill();
                             bx += 12;
                             if (bx > canvas.width + 100) clearInterval(bounceInt);
-                        }, 40);  // ช้าลง
+                        }, 40);
                         document.getElementById('message').textContent += ' → 🔔 พลาด! กระเด้ง';
                     }
                 }
-            }, 40);  // ช้าลง
+            }, 40);
         }
 
         ws.onmessage = (e) => {
@@ -288,11 +287,11 @@ PLAYER_HTML = """
                     document.getElementById('status').textContent = 'รอบเริ่มแล้ว! กำลังยิง...';
                 } else if (msg.type === 'result') {
                     if (msg.is_winner) {
-                        showModal('🎉 ยินดีด้วย! 🎉', 'คุณยิงถูกเป๊ะ!\nไปหมุนกงล้อรางวัลกัน!', () => {
+                        showModal('🎉 ยินดีด้วย! 🎉', 'คุณยิงถูกเป๊ะ!\\nไปหมุนกงล้อรางวัลกัน!', () => {
                             location.href = '/wheel';
                         });
                     } else {
-                        showModal('พลาด!', `คุณยิง ${msg.energy} eV (พลาดไปนิดเดียว)\nรอรอบใหม่เพื่อลุ้นต่อ`, () => {
+                        showModal('พลาด!', `คุณยิง ${msg.energy} eV (พลาดไปนิดเดียว)\\nรอรอบใหม่เพื่อลุ้นต่อ`, () => {
                             location.href = '/player';
                         });
                     }
@@ -407,7 +406,7 @@ WHEEL_HTML = """
             if (spinning) return;
             spinning = true;
             document.getElementById('spin-btn').disabled = true;
-            const spinAngle = 3600 + Math.random() * 3600; // 10-20 รอบ
+            const spinAngle = 3600 + Math.random() * 3600;
             let startAngle = currentAngle;
             let time = 0;
             const duration = 5000;
@@ -444,9 +443,6 @@ async def main_screen(request: Request):
     buf_player = BytesIO()
     img_player.save(buf_player, format="PNG")
     qr_player_b64 = b64encode(buf_player.getvalue()).decode()
-    
-    current_ready = ready_count
-    total_players = len(players)
     
     html = MAIN_HTML.replace("{{QR_PLAYER_BASE64}}", qr_player_b64)\
                     .replace("{{JOIN_URL}}", join_url)
@@ -490,7 +486,6 @@ async def ws_main(ws: WebSocket):
                     if ready_count < len(players):
                         missing = len(players) - ready_count
                         await main_ws.send_json({"type": "start_failed", "data": {"missing": missing}})
-                        # แจ้งผู้เล่นที่ยังไม่พร้อม
                         for pid, p in players.items():
                             if not p["ready"] and pid in player_connections:
                                 try:
@@ -571,14 +566,12 @@ async def process_round():
     
     for _, name, energy, hit_result in results:
         await broadcast_shot(name, energy, "hit" if hit_result else "miss")
-        await asyncio.sleep(6)  # นานขึ้นเพื่อให้ข้อความและเอฟเฟกต์ค้างนาน
+        await asyncio.sleep(6)
     
-    # แจ้งผู้ชนะบนจอใหญ่
     if winners:
         if main_ws:
             await main_ws.send_json({"type": "winners_announce", "data": {"winners": winners}})
     
-    # แจ้งผลส่วนตัว + redirect
     for pid, name, energy, is_winner in results:
         if pid in player_connections:
             try:
@@ -590,14 +583,12 @@ async def process_round():
             except:
                 pass
     
-    # แจ้งรอบจบเพื่อรีเซ็ต UI ผู้เล่น
     for pws in player_connections.values():
         try:
             await pws.send_json({"type": "round_end"})
         except:
             pass
     
-    # รีเซ็ตสถานะ
     game_status = "waiting"
     ready_count = 0
     for p in players.values():
@@ -605,7 +596,7 @@ async def process_round():
     await broadcast_state()
     
     if winners:
-        await asyncio.sleep(10)  # นานขึ้นเพื่อให้ป้ายผู้ชนะค้าง
+        await asyncio.sleep(10)
         winners = []
         await broadcast_state()
 
