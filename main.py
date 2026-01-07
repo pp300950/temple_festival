@@ -180,6 +180,10 @@ MAIN_HTML = """
 
                 const startBtn = document.getElementById('start-round-btn');
                 startBtn.disabled = !(data.total_players > 0 && data.game_status === 'waiting');
+                
+                document.getElementById('message').textContent = '';
+                drawScene();
+                
             } else if (msg.type === 'shot') {
                 animateShot(msg.data.energy, msg.data.result, msg.data.player);
             } else if (msg.type === 'winners_announce') {
@@ -189,7 +193,11 @@ MAIN_HTML = """
             } else if (msg.type === 'all_shots_done') {
             document.getElementById('message').textContent = 'รอบนี้จบแล้ว! ไม่มีผู้ชนะ รอรอบใหม่...';
             drawScene();  // clear animation
-        }
+        } else if (msg.type === 'clear_display') {
+                document.getElementById('message').textContent = '';
+                document.getElementById('winner').textContent = '';
+                drawScene();
+            }
         };
 
         function showModal(title, message) {
@@ -638,11 +646,15 @@ async def process_round():
     has_winner = len(winners) > 0
     
     if has_winner:
+        await asyncio.sleep(10)
+        winners = []
+        # เพิ่มส่วนนี้เพื่อ clear display ทุกจอใหญ่ทันที
         for conn in main_connections.copy():
             try:
-                await conn.send_json({"type": "winners_announce", "data": {"winners": winners}})
+                await conn.send_json({"type": "clear_display"})
             except:
                 main_connections.remove(conn)
+        await broadcast_state()
     
     if not has_winner:
         for conn in main_connections.copy():
