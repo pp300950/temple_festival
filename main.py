@@ -11,7 +11,6 @@ import random
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
-
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Game state
@@ -295,6 +294,8 @@ PLAYER_HTML = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ปืนอิเล็กตรอน</title>
+    <link rel="preload" href="/static/videos/background1.mp4" as="video" type="video/mp4">
+
     <style>
         body { font-family: Arial, sans-serif; background: linear-gradient(#111, #003); color: #fff; text-align: center; padding: 20px; }
         h1 { color: #0ff; text-shadow: 0 0 10px #0ff; }
@@ -373,7 +374,7 @@ PLAYER_HTML = """
                 } else if (msg.type === 'result') {
                 if (msg.is_winner) {
                     // ผู้ชนะ → แสดง modal แล้ว redirect ไปหมุนกงล้อ
-                    showModal('🎉 ยินดีด้วย! 🎉', 'คุณยิงถูกเป๊ะ!\\nไปหมุนกงล้อรางวัลกัน!', () => {
+                    showModal('🎉 ยินดีด้วย! 🎉', 'คุณยิงถูกเป๊ะเลย!\\nไปสอยดาวรับรางวัลกัน!', () => {
                         location.href = '/wheel';
                     });
                 } else {
@@ -470,6 +471,8 @@ WHEEL_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="preload" href="/static/videos/background1.mp4" as="video" type="video/mp4">
+
     <title>สอยดาวลุ้นรางวัล!</title>
     <style>
         body {
@@ -635,7 +638,11 @@ WHEEL_HTML = """
     <div class="video-bg">
         <video autoplay loop muted playsinline>
 
-            <source src="/static/videos/background1.mp4" type="video/mp4">
+            
+            <video autoplay loop muted playsinline preload="auto">
+    <source src="/static/videos/background1.mp4" type="video/mp4">
+</video>
+
 
             </video>
     </div>
@@ -981,7 +988,7 @@ async def process_round():
     
     # ถ้ามีผู้ชนะ → รอแสดงผลสักพัก แล้ว clear winners (ไม่ clear players เพราะ redirect จะ disconnect เอง)
     if has_winner:
-        await asyncio.sleep(10)
+        await asyncio.sleep(3)
         winners = []
         await broadcast_state()
 
