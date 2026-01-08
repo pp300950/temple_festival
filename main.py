@@ -467,125 +467,263 @@ WHEEL_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>หมุนกงล้อรางวัล!</title>
+    <title>สอยดาวลุ้นรางวัล!</title>
     <style>
-        body { font-family: Arial, sans-serif; background: linear-gradient(#003, #111); color: #fff; text-align: center; padding: 20px; }
-        h1 { color: #ff0; text-shadow: 0 0 15px #ff0; }
-        canvas { border: 5px solid #0ff; border-radius: 50%; margin: 30px; }
-        button { padding: 15px 30px; font-size: 1.8em; background: #f00; color: #fff; border: none; border-radius: 15px; cursor: pointer; }
-        #result { font-size: 3em; margin: 40px; color: #ff0; }
-        .close-btn { position: absolute; top: 20px; right: 20px; font-size: 2em; cursor: pointer; }
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Arial', sans-serif;
+            background: #111; /* ใส่สีพื้นหลังกันไว้กรณียังไม่โหลดวิดีโอ */
+            color: #fff;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            min-height: 100vh;
+            position: relative;
+            z-index: 1;
+            overflow-x: hidden; /* ป้องกันเลื่อนซ้ายขวาเกิน */
+        }
+
+        /* Video Background */
+        .video-bg {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -2;
+            overflow: hidden;
+        }
+
+        .video-bg video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: blur(12px);
+            transform: scale(1.1);
+        }
+
+        .video-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.4); /* มืดขึ้นอีกนิดให้อ่านง่าย */
+            z-index: -1;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            font-size: 3em;
+            color: #ff3366;
+            text-shadow: 0 0 15px #ff3366;
+            cursor: pointer;
+            z-index: 10;
+        }
+
+        h1 {
+            margin: 30px 0 10px;
+            font-size: 3.5em;
+            color: #ffff00;
+            text-shadow: 0 0 20px #ffff00, 0 0 40px #ffff00;
+            animation: glow 2s infinite alternate;
+            text-align: center;
+            line-height: 1.2;
+            padding: 0 10px;
+        }
+
+        @keyframes glow {
+            from { text-shadow: 0 0 20px #ffff00; }
+            to { text-shadow: 0 0 40px #ffff00, 0 0 60px #ffaa00; }
+        }
+
+        .instruction {
+            font-size: 1.8em;
+            margin: 10px 20px 30px; /* เพิ่มระยะห่างด้านล่าง */
+            text-shadow: 0 0 15px #ff00ff;
+            text-align: center;
+        }
+
+        /* --- ส่วนที่แก้ไข Layout --- */
+        #stars-container {
+            display: flex; /* เปลี่ยนเป็น Flex เพื่อให้คุมง่ายขึ้นในกรณีดาวน้อย */
+            flex-wrap: wrap; /* ให้ปัดตกบรรทัด */
+            justify-content: center; /* จัดกึ่งกลางจอเสมอ */
+            gap: 20px; /* ลดช่องว่างระหว่างดาวลง */
+            padding: 20px;
+            max-width: 1200px;
+            width: 100%;
+            box-sizing: border-box;
+        }
+
+        .star-wrapper {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-bottom: 20px; /* ระยะห่างระหว่างแถว */
+            width: 160px; /* กำหนดความกว้าง wrapper ให้แน่นอน */
+        }
+        /* ----------------------- */
+
+        .string {
+            width: 4px;
+            height: 100px; /* ลดความยาวเชือกลงนิดหน่อยให้สมดุล */
+            background: linear-gradient(to bottom, #ffffff, #aaaaaa);
+            box-shadow: 0 0 10px #ffff00;
+        }
+
+        .star {
+            width: 120px;
+            height: 120px;
+            background: linear-gradient(145deg, #ffff66, #ffaa00);
+            clip-path: polygon(50% 0%, 61% 35%, 98% 35%, 68% 57%, 79% 91%, 50% 70%, 21% 91%, 32% 57%, 2% 35%, 39% 35%);
+            cursor: pointer;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            box-shadow: 0 0 30px #ffff00, 0 0 50px #ff6600;
+            animation: pulse 3s infinite ease-in-out;
+            position: relative; /* เพื่อให้ z-index ทำงาน */
+        }
+
+        @keyframes pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+
+        .star:hover {
+            transform: scale(1.15);
+            box-shadow: 0 0 50px #ffff00, 0 0 80px #ff6600;
+        }
+
+        .star.soied {
+            animation: drop 1.5s forwards ease-in; /* เร่งความเร็วตกนิดหน่อย */
+            z-index: 100;
+            pointer-events: none;
+        }
+
+        @keyframes drop {
+            0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+            100% { transform: translateY(100vh) rotate(720deg); opacity: 0; }
+        }
+
+        /* Responsive สำหรับมือถือ */
+        @media (max-width: 768px) {
+            h1 { font-size: 2.2em; margin-top: 20px; }
+            .instruction { font-size: 1.4em; margin-bottom: 20px; }
+            #stars-container { gap: 10px; padding: 10px; }
+            .star-wrapper { width: 110px; margin-bottom: 10px; }
+            .string { height: 60px; width: 2px; }
+            .star { width: 90px; height: 90px; }
+        }
+
+        @media (max-width: 480px) {
+            .close-btn { font-size: 2em; top: 10px; right: 10px; }
+            /* จัดให้มือถือเล็กๆ เห็น 2-3 ดวงต่อแถวได้สวยขึ้น */
+            .star-wrapper { width: 30%; } 
+            .star { width: 70px; height: 70px; }
+        }
     </style>
 </head>
 <body>
+
+    <div class="video-bg">
+        <video autoplay loop muted playsinline>
+            <source src="backgroung1.mp4" type="video/mp4">
+            </video>
+    </div>
+    <div class="video-overlay"></div>
+
     <div class="close-btn" onclick="location.href='/player'">✖</div>
-    <h1>🎡 หมุนกงล้อรางวัล 🎡</h1>
-    <canvas id="wheel" width="400" height="400"></canvas>
-    <br>
-    <button id="spin-btn" onclick="spin()">หมุน!</button>
-    <div id="result"></div>
 
-    <!-- แก้เฉพาะส่วน <script> ใน WHEEL_HTML ทั้งหมด (แทนที่ script เดิมทั้งหมด) -->
-<script>
-    const canvas = document.getElementById('wheel');
-    const ctx = canvas.getContext('2d');
-    const sectors = ['1 ลูกอม', '2 ลูกอม', '3 ลูกอม', '4 ลูกอม', '5 ลูกอม', 'รางวัลปริศนา'];
-    const colors = ['#ff0', '#0f0', '#0ff', '#f0f', '#ff69b4', '#ffa500']; // ปรับสีให้ชัดขึ้น
-    let currentAngle = 0;
-    let spinning = false;
+    <h1>สอยดาวลุ้นรางวัล 🎆🎪</h1>
+    <p class="instruction">คลิกสอยดาว 1 ดวง เพื่อลุ้นรางวัล!</p>
 
-    function drawWheel() {
-        const numSectors = sectors.length;
-        const angleStep = (Math.PI * 2) / numSectors;
+    <div id="stars-container">
+        <div class="star-wrapper"><div class="string"></div><div class="star" onclick="soi(this)"></div></div>
+        <div class="star-wrapper"><div class="string"></div><div class="star" onclick="soi(this)"></div></div>
+        <div class="star-wrapper"><div class="string"></div><div class="star" onclick="soi(this)"></div></div>
+        <div class="star-wrapper"><div class="string"></div><div class="star" onclick="soi(this)"></div></div>
+        <div class="star-wrapper"><div class="string"></div><div class="star" onclick="soi(this)"></div></div>
+        <div class="star-wrapper"><div class="string"></div><div class="star" onclick="soi(this)"></div></div>
+    </div>
 
-        // Clear และวาดพื้นวงล้อ
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-        ctx.beginPath();
-        ctx.arc(200, 200, 200, 0, Math.PI * 2);
-        ctx.fillStyle = '#222';
-        ctx.fill();
-        ctx.strokeStyle = '#0ff';
-        ctx.lineWidth = 8;
-        ctx.stroke();
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
 
-        // วาดแต่ละภาค
-        sectors.forEach((text, i) => {
-            ctx.beginPath();
-            ctx.fillStyle = colors[i];
-            ctx.moveTo(200, 200);
-            ctx.arc(200, 200, 200, currentAngle + i * angleStep, currentAngle + (i + 1) * angleStep);
-            ctx.lineTo(200, 200);
-            ctx.fill();
+    <script>
+        let selected = false;
 
-            // ข้อความในภาค
-            ctx.save();
-            ctx.translate(200, 200);
-            ctx.rotate(currentAngle + i * angleStep + angleStep / 2);
-            ctx.fillStyle = '#000';
-            ctx.font = 'bold 26px Arial';
-            ctx.textAlign = 'center';
-            ctx.fillText(text, 110, 10);
-            ctx.restore();
-        });
+        function soi(star) {
+            if (selected) return;
+            selected = true;
 
-        // ลูกศรชี้ (ใหญ่ ชัด เต็มภาค)
-        ctx.beginPath();
-        ctx.moveTo(390, 200);
-        ctx.lineTo(340, 170);
-        ctx.lineTo(340, 230);
-        ctx.closePath();
-        ctx.fillStyle = '#f00';
-        ctx.fill();
-        ctx.strokeStyle = '#fff';
-        ctx.lineWidth = 4;
-        ctx.stroke();
-    }
+            document.querySelector('.instruction').textContent = 'กำลังสอยดาว... 🎯';
 
-    function spin() {
-        if (spinning) return;
-        spinning = true;
-        document.getElementById('spin-btn').disabled = true;
+            const prizes = [
+                'ลูกอม 1 เม็ด',
+                'ลูกอม 2 เม็ด',
+                'ลูกอม 3 เม็ด',
+                'ลูกอม 4 เม็ด',
+                'ลูกอม 5 เม็ด',
+                'รางวัลปริศนา!'
+            ];
+            const prize = prizes[Math.floor(Math.random() * prizes.length)];
 
-        const numSectors = sectors.length;
-        const randomSector = Math.floor(Math.random() * numSectors); // เลือกภาคล่วงหน้าเพื่อความแม่นยำ 100%
-        const anglePerSector = 360 / numSectors;
-        const targetAngle = randomSector * anglePerSector + anglePerSector / 2; // ชี้กลางภาคพอดี
+            // ทำให้ดาวอื่นๆ มัว
+            document.querySelectorAll('.star').forEach(s => {
+                if (s !== star) {
+                    s.style.opacity = '0.3';
+                    s.style.pointerEvents = 'none';
+                    s.style.filter = 'grayscale(100%)'; // เพิ่มสีเทาให้ดูชัดว่าจบแล้ว
+                }
+            });
 
-        const fullRotations = 4 + Math.random() * 3; // หมุน 4-7 รอบ (เร็วขึ้น ไม่นานเกิน)
-        const totalSpinAngle = fullRotations * 360 + targetAngle;
+            // เริ่มแอนิเมชันตก
+            star.classList.add('soied');
 
-        let startAngle = currentAngle % 360;
-        if (startAngle < 0) startAngle += 360;
-
-        let elapsed = 0;
-        const duration = 3500; // หมุน 3.5 วินาที (เร็วขึ้นแต่ยังตื่นเต้น)
-
-        const animate = () => {
-            elapsed += 20;
-            const progress = Math.min(elapsed / duration, 1);
-            // Ease-out แรงเพื่อช้าลงสวย
-            const easeProgress = 1 - Math.pow(1 - progress, 4);
-
-            currentAngle = startAngle + totalSpinAngle * easeProgress;
-
-            drawWheel();
-
-            if (progress < 1) {
-                requestAnimationFrame(animate);
-            } else {
-                // Snap เข้ากลางภาคพอดี
-                currentAngle = targetAngle;
-                drawWheel();
-                document.getElementById('result').innerHTML = `<strong>เย่! คุณได้ ${sectors[randomSector]} 🍬🎉</strong>`;
-                spinning = false;
+            // --- แก้ไขตรงนี้: เรียกใช้ฟังก์ชันให้ถูกชื่อ ---
+            // ของเดิม: canvasConfetti(...) -> ผิด
+            // ของใหม่: confetti(...) -> ถูก
+            try {
+                confetti({
+                    particleCount: 200,
+                    spread: 120,
+                    origin: { y: 0.6 },
+                    zIndex: 2000 // ให้เอฟเฟกต์อยู่เหนือทุกอย่าง
+                });
+            } catch (e) {
+                console.error("Confetti error:", e);
             }
-        };
 
-        requestAnimationFrame(animate);
-    }
-
-    drawWheel(); // วาดครั้งแรกรอหมุน
-</script>
+            // แสดงผลรางวัล
+            setTimeout(() => {
+                let isMystery = prize.includes('ปริศนา');
+                let extraEmoji = isMystery ? '🎁😲' : '🍬🍬';
+                let titleText = isMystery ? 'โอ้โห! รางวัลปริศนา!' : 'เย่! ได้รางวัล!';
+                
+                Swal.fire({
+                    title: titleText,
+                    html: `<strong style="font-size: 3em; color: #ffff00; text-shadow: 0 0 20px #ff00ff; display:block; margin: 10px 0;">${prize}</strong><span style="font-size: 2.5em;">${extraEmoji}</span>`,
+                    icon: isMystery ? 'question' : 'success',
+                    confirmButtonText: 'รับรางวัล',
+                    background: 'rgba(20, 20, 50, 0.95)', // พื้นหลังโปร่งแสงนิดๆ
+                    color: '#fff',
+                    allowOutsideClick: false,
+                    backdrop: `
+                        rgba(0,0,123,0.4)
+                        url("https://sweetalert2.github.io/images/nyan-cat.gif")
+                        left top
+                        no-repeat
+                    `
+                }).then(() => {
+                    document.querySelector('.instruction').innerHTML = `คุณสอยได้ <strong style="color:#ffff00;">${prize}</strong> 🎉`;
+                });
+            }, 1200); // ลดเวลาลงนิดหน่อยให้ไม่ต้องรอนานเกินไป
+        }
+    </script>
 </body>
 </html>
 """
