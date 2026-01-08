@@ -294,8 +294,6 @@ PLAYER_HTML = """
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ปืนอิเล็กตรอน</title>
-    <link rel="preload" href="/static/videos/background1.mp4" as="video" type="video/mp4">
-
     <style>
         body { font-family: Arial, sans-serif; background: linear-gradient(#111, #003); color: #fff; text-align: center; padding: 20px; }
         h1 { color: #0ff; text-shadow: 0 0 10px #0ff; }
@@ -471,8 +469,6 @@ WHEEL_HTML = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="preload" href="/static/videos/background1.mp4" as="video" type="video/mp4">
-
     <title>สอยดาวลุ้นรางวัล!</title>
     <style>
         body {
@@ -638,11 +634,7 @@ WHEEL_HTML = """
     <div class="video-bg">
         <video autoplay loop muted playsinline>
 
-            
-            <video autoplay loop muted playsinline preload="auto">
-    <source src="/static/videos/background1.mp4" type="video/mp4">
-</video>
-
+            <source src="/static/videos/background1.mp4" type="video/mp4">
 
             </video>
     </div>
