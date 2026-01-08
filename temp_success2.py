@@ -88,13 +88,6 @@ MAIN_HTML = """
     background: #d00;
     box-shadow: 0 0 30px #ff0;
 }
-#warning {
-    font-size: 2em;
-    color: #ff0000;
-    margin: 20px 0;
-    min-height: 60px;
-    font-weight: bold;
-}
     </style>
 </head>
 <body>
@@ -321,7 +314,6 @@ PLAYER_HTML = """
         <h2>ปรับพลังงานอิเล็กตรอน</h2>
         <div id="scale"><span>4.5 eV</span><span>5.5 eV</span></div>
         <div id="energy-display">4.5</div>
-        <div id="warning"></div>
         <button onclick="adj(-0.1)">−0.1</button>
         <button onclick="adj(0.1)">+0.1</button>
         <br><br>
@@ -339,14 +331,6 @@ PLAYER_HTML = """
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/reconnecting-websocket/1.0.0/reconnecting-websocket.min.js"></script>
     <script>
-    function showWarning(message) {
-    const warning = document.getElementById('warning');
-    warning.textContent = message;
-    setTimeout(() => {
-        warning.textContent = '';
-    }, 2000);  // หายไปอัตโนมัติหลัง 2 วินาที
-}
-
         let pid, energy = 4.5, ws, ready = false;
 
         async function join() {
@@ -412,23 +396,12 @@ PLAYER_HTML = """
         }
 
         function adj(d) {
-    const attempted = energy + d;
-    const clamped = Math.max(4.5, Math.min(5.5, attempted));
-
-    // ถ้าพยายามปรับเกินขอบเขต → แสดงเตือน
-    if (attempted < 4.5) {
-        showWarning('ไม่สามารถลดต่ำกว่า 4.5 eV ได้!');
-    } else if (attempted > 5.5) {
-        showWarning('ไม่สามารถเพิ่มสูงกว่า 5.5 eV ได้!');
-    }
-
-    energy = Math.round(clamped * 10) / 10;
-    document.getElementById('energy-display').textContent = energy;
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({action: 'adjust', energy}));
-    }
-}
+            energy = Math.round((Math.max(4.5, Math.min(5.5, energy + d))) * 10) / 10;
+            document.getElementById('energy-display').textContent = energy;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({action: 'adjust', energy}));
+            }
+        }
 
         function setReady() {
             if (ws && ws.readyState === WebSocket.OPEN) {
