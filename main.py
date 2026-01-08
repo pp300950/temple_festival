@@ -10,10 +10,9 @@ import os
 import random
 from fastapi.staticfiles import StaticFiles
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-
-
 app = FastAPI()
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 # Game state
 players = {}  # pid -> {"name": str, "energy": float, "ready": bool}
