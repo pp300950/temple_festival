@@ -8,6 +8,10 @@ import uuid
 import asyncio
 import os
 import random
+from fastapi.staticfiles import StaticFiles
+
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
 
 app = FastAPI()
 
@@ -631,7 +635,9 @@ WHEEL_HTML = """
 
     <div class="video-bg">
         <video autoplay loop muted playsinline>
-            <source src="backgroung1.mp4" type="video/mp4">
+
+            <source src="/static/videos/background1.mp4" type="video/mp4">
+
             </video>
     </div>
     <div class="video-overlay"></div>
